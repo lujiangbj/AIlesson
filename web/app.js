@@ -29,6 +29,8 @@ const S = {
   narrow: null,
   stuckTimer: null,
   busy: false,
+  muted: false,       // 常驻静音开关（FR-6.2）
+  lessonIndex: null,  // 当前课堂是课程表的第几节
 };
 
 // ---------- 工具 ----------
@@ -41,8 +43,14 @@ const h = (tag, props = {}, kids = []) => {
     else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
     else if (v !== null && v !== undefined) e.setAttribute(k, v);
   }
-  for (const c of [].concat(kids)) {
-    if (c === null || c === undefined || c === false) continue;
+  const flat = [];
+  (function walk(xs) {
+    for (const x of xs) {
+      if (Array.isArray(x)) walk(x);
+      else if (x !== null && x !== undefined && x !== false) flat.push(x);
+    }
+  })(kids);
+  for (const c of flat) {
     e.appendChild(typeof c === 'object' ? c : document.createTextNode(String(c)));
   }
   return e;
@@ -83,6 +91,14 @@ function play(src, btn) {
   au.play().catch(() => btn && btn.classList.remove('is-playing'));
 }
 
+function toggleMute() {
+  S.muted = !S.muted;
+  au.muted = S.muted;
+  try { localStorage.setItem('ailesson.muted', S.muted ? '1' : '0'); } catch (_) {}
+  render();
+  toast(S.muted ? '已静音，课程照常进行' : '已恢复声音');
+}
+
 async function playSeq(srcs, btn) {
   if (btn) btn.classList.add('is-playing');
   for (const s of srcs) {
@@ -105,6 +121,7 @@ function render() {
               report: viewReport }[S.view];
   app.appendChild(v());
   document.body.classList.toggle('checking', S.view === 'check' && !S.packing);
+  document.body.classList.toggle('classing', S.view === 'card');
   if (S.view === 'check') window.scrollTo(0, y);
 }
 
@@ -447,60 +464,164 @@ async function repack() {
 
 const KIND_HINT = {
   a2i: '听音选图', i2a: '看图选音', shadow: '跟读',
-  chunk: '听短语选图', sentence: '听原声选图',
+  chunk: '听短语选义', sentence: '听原声选义',
 };
+
+// 16 个环节的进度轨。当前环节文案以后端 card.segment 为准，
+// 这里只是给进度轨提供完整课表视图。
+const SEGMENT_UI = [
+  { i: 1, t: '开场复习' }, { i: 2, t: '抽检' },
+  { i: 3, t: '生词首触' }, { i: 4, t: '生词反向' }, { i: 5, t: '生词跟读' },
+  { i: 6, t: '短语听辨' }, { i: 7, t: '短语反向' }, { i: 8, t: '短语跟读' },
+  { i: 9, t: '中场' }, { i: 10, t: '句子原声' }, { i: 11, t: '句子反向' },
+  { i: 12, t: '句子跟读' }, { i: 13, t: '混打' }, { i: 14, t: '错题重做' },
+  { i: 15, t: '场景盲听' }, { i: 16, t: '收尾报告' },
+];
+
+function lessonTitle() {
+  const idx = S.lessonIndex;
+  const lesson = S.status && S.status.lessons
+    && S.status.lessons.find(l => l.index === idx);
+  return (lesson && lesson.theme) ? lesson.theme : '';
+}
+
+function lessonTop(c) {
+  const idx = S.lessonIndex;
+  return h('header', { class: 'lesson-top' }, [
+    h('button', {
+      class: 'icon-btn exit-btn', title: '保存进度并退出课堂',
+      onclick: pauseLesson,
+    }, ['退出课堂']),
+    h('div', { class: 'lesson-head' }, [
+      h('div', { class: 'lesson-title' }, [
+        idx ? `第 ${idx} 节` : '课堂',
+        lessonTitle() ? ' · ' + lessonTitle() : '',
+      ]),
+      h('div', { class: 'lesson-seg' }, [
+        '环节 ', h('b', {}, [String(c.segment.index), '/16']),
+        ' ', c.segment.title, ' · 约 ', c.segment.minutes, ' 分钟',
+      ]),
+    ]),
+    h('div', { class: 'lesson-head-right' }, [
+      h('span', { class: 'score-pill' }, [
+        h('span', { class: 'ok' }, ['✓ ', c.stats.correct]),
+        h('span', { class: 'bad' }, ['✗ ', c.stats.wrong]),
+      ]),
+      h('button', {
+        class: 'icon-btn', title: S.muted ? '取消静音' : '静音',
+        onclick: toggleMute,
+      }, [S.muted ? '🔇' : '🔊']),
+    ]),
+  ]);
+}
+
+function lessonProgress(c) {
+  const shown = Math.min(c.cursor + 1, c.total);
+  const pct = c.total ? Math.round(c.cursor / c.total * 100) : 0;
+  return h('div', { class: 'lesson-progress' }, [
+    h('div', { class: 'seg-rail' },
+      SEGMENT_UI.map(seg => {
+        const state = seg.i < c.segment.index ? 'done'
+          : seg.i === c.segment.index ? 'cur' : '';
+        return h('div', {
+          class: 'seg-pill ' + state,
+          title: `环节 ${seg.i} · ${seg.t}`,
+        }, [
+          h('span', { class: 'seg-n' }, [seg.i < c.segment.index ? '✓' : seg.i]),
+          h('span', {}, [seg.t]),
+        ]);
+      })),
+    h('div', { class: 'bar-row' }, [
+      h('span', {}, [`第 ${shown} / ${c.total} 张`]),
+      h('div', { class: 'bar' }, [h('i', { style: `width:${pct}%` })]),
+      h('span', {}, [`${pct}%`]),
+    ]),
+  ]);
+}
+
+function lessonShell(c, main) {
+  return h('div', { class: 'lesson-stage' }, [
+    lessonTop(c),
+    lessonProgress(c),
+    main,
+    // 竖屏 iPad 给旋转提示，而不是硬塞一个长条页面
+    h('div', { class: 'rotate-guard' }, [
+      h('div', {}, [
+        h('div', { class: 'rotate-ico' }, ['📱']),
+        h('div', { class: 'rotate-title' }, ['请把设备横过来']),
+        h('div', { class: 'rotate-sub' }, ['课程是横屏课堂界面，横过来上课更舒服']),
+      ]),
+    ]),
+  ]);
+}
+
+function backToLessons() {
+  return h('button', {
+    class: 'primary wide big', style: 'margin-top:16px',
+    onclick: async () => {
+      try { S.status = await api('/api/status'); } catch (_) {}
+      S.card = null; resetCardState(); S.lessonIndex = null;
+      S.view = 'lessons'; render();
+    },
+  }, ['回课程表']);
+}
 
 function viewCard() {
   const c = S.card;
   if (!c) return h('div', { class: 'card' }, ['加载中…']);
-  if (c.finished) return h('div', { class: 'card' }, ['本节结束']);
-
-  const pct = Math.round(c.cursor / c.total * 100);
-  const head = h('div', {}, [
-    h('div', { class: 'row between' }, [
-      h('span', { class: 'seg' }, [
-        h('b', {}, [`${c.segment.index}. ${c.segment.title}`]),
-        `  ${c.cursor + 1}/${c.total}`,
+  if (c.finished) {
+    return lessonShell(c, h('main', { class: 'lesson-main single' }, [
+      h('section', { class: 'panel-card report-card' }, [
+        h('div', { class: 'big-emoji' }, ['🎉']),
+        h('h2', {}, ['本节结束']),
+        h('div', { class: 'dim' }, ['这节课已经全部走完。']),
+        backToLessons(),
       ]),
-      h('span', { class: 'row', style: 'gap:8px;align-items:center' }, [
-        h('span', { class: 'dim', style: 'font-size:12px' },
-          [`对 ${c.stats.correct} · 错 ${c.stats.wrong}`]),
-        // 中途退出：进度留在原处，回来从同一张卡续上
-        h('button', { class: 'mini', onclick: pauseLesson }, ['退出']),
-      ]),
-    ]),
-    h('div', { class: 'bar' }, [h('i', { style: `width:${pct}%` })]),
-  ]);
+    ]));
+  }
 
   const body = { shadow: cardShadow, passive: cardPassive,
                  assess: cardAssess, report: cardReport }[c.kind] || cardQuiz;
-  return h('div', {}, [head, body(c)]);
+  return lessonShell(c, body(c));
+}
+
+function promptCard(c, isI2A) {
+  return h('section', { class: 'panel-card prompt-card' }, [
+    h('div', { class: 'panel-label' }, [
+      h('span', {}, [KIND_HINT[c.kind] || c.kind]),
+      c.is_bonus ? h('span', {}, ['顺带点']) : null,
+    ]),
+    c.image
+      ? h('div', { class: 'prompt-media ' + (isI2A ? 'sent' : '') },
+          [h('img', { src: c.image, alt: '' })])
+      : h('div', { class: 'prompt-media' }, [
+          h('div', { class: 'prompt-echo' }, ['🔊']),
+        ]),
+    isI2A && c.meaning_zh
+      ? h('div', { class: 'prompt-meaning' }, [c.meaning_zh])
+      : null,
+    isI2A ? null : h('div', { class: 'prompt-actions' }, [
+      h('button', {
+        class: 'play', onclick: e => play(c.prompt_audio, e.currentTarget),
+      }, ['🔊 再听一次']),
+      h('button', {
+        class: 'play small ghost',
+        onclick: e => play(c.prompt_audio_slow || c.prompt_audio, e.currentTarget),
+      }, ['🐢 慢速']),
+    ]),
+  ]);
+}
+
+function answerHint(c) {
+  if (c.kind === 'i2a') return '点选项试听，点击即作答';
+  if (c.domain !== 'words') return '听声音，选出对应的中文释义';
+  return '听声音，选出对应的图片';
 }
 
 function cardQuiz(c) {
   const answered = S.picked !== null;
   const isI2A = c.kind === 'i2a';
   const long = c.domain !== 'words';   // 短语句子的选项用文字列表
-
-  const box = h('div', {}, []);
-  box.appendChild(h('div', { class: 'dim', style: 'margin-bottom:8px' },
-    [KIND_HINT[c.kind] || c.kind, c.is_bonus ? '（顺带）' : '']));
-
-  if (isI2A) {
-    box.appendChild(h('div', { class: 'card' }, [
-      c.image ? h('img', { src: c.image, style: 'width:100%;border-radius:10px', alt: '' })
-              : null,
-      h('div', { style: 'margin-top:8px;text-align:center;font-size:16px' }, [c.meaning_zh]),
-    ]));
-  } else {
-    box.appendChild(h('button', {
-      class: 'play', onclick: e => play(c.prompt_audio, e.currentTarget),
-    }, ['🔊 播放']));
-    box.appendChild(h('button', {
-      class: 'play small ghost', style: 'margin-top:8px',
-      onclick: e => play(c.prompt_audio_slow || c.prompt_audio, e.currentTarget),
-    }, ['🐢 慢速']));
-  }
 
   // 选项：词用图片格；短语句子用文字行（图片区分度不够）
   const opts = c.choices.map(ch => {
@@ -513,9 +634,12 @@ function cardQuiz(c) {
 
     let kids;
     if (isI2A) {
-      kids = [h('span', {}, ['🔊 听一听'])];
+      kids = [h('span', {}, ['🔊 ', answered ? ch.zh : '听一听'])];
     } else if (long) {
-      kids = [h('span', { class: 'zh3' }, [ch.zh])];
+      kids = [
+        h('span', { class: 'zh3' }, [ch.zh]),
+        answered ? h('span', { class: 'opt-en' }, [ch.label]) : null,
+      ];
     } else {
       kids = [
         ch.image ? h('img', { src: ch.image, alt: '' })
@@ -534,83 +658,130 @@ function cardQuiz(c) {
       },
     }, kids);
   });
-  box.appendChild(h('div', { class: (long || isI2A) ? 'olist' : 'grid' }, opts));
 
-  if (isI2A && !answered) {
-    box.appendChild(h('div', { class: 'dim', style: 'margin-top:8px;text-align:center' },
-      ['点选项试听，选中即作答']));
-  }
-
-  if (answered) {
-    // 答对也要显示词义：可能是蒙对的，不确认一遍等于没学到
-    const label = (c.text || c.item_id) + (c.meaning_zh ? `（${c.meaning_zh}）` : '');
-    box.appendChild(h('div', { class: 'fb ' + (S.correct ? 'ok' : 'bad') }, [
-      h('div', {}, [(S.correct ? '✓ 对了：' : '✗ 正确答案：') + label]),
-      h('div', { class: 'tutor' },
-        [S.tutorLine || h('span', {}, [h('span', { class: 'spin' }), ' 老师在说…'])]),
-    ]));
-    box.appendChild(h('button', {
-      class: 'primary wide big', style: 'margin-top:10px', onclick: submit,
-    }, ['继续 →']));
-  }
-  return box;
+  const label = (c.text || c.item_id) + (c.meaning_zh ? `（${c.meaning_zh}）` : '');
+  return h('main', { class: 'lesson-main' }, [
+    promptCard(c, isI2A),
+    h('section', { class: 'panel-card answer-card' }, [
+      h('div', { class: 'panel-label' }, [
+        h('b', {}, ['选择答案']),
+        h('span', {}, [String(c.cursor + 1), ' / ', String(c.total)]),
+      ]),
+      h('div', { class: (long || isI2A) ? 'olist' : 'grid' }, opts),
+      answered
+        ? [
+            // 答对也要显示词义：可能是蒙对的，不确认一遍等于没学到
+            h('div', { class: 'fb lg ' + (S.correct ? 'ok' : 'bad') }, [
+              h('div', {}, [(S.correct ? '✓ 对了：' : '✗ 正确答案：') + label]),
+              h('div', { class: 'tutor' },
+                [S.tutorLine || h('span', {}, [h('span', { class: 'spin' }), ' 老师在说…'])]),
+            ]),
+            h('button', {
+              class: 'primary wide big', style: 'margin-top:14px', onclick: submit,
+            }, ['继续 →']),
+          ]
+        : h('div', { class: 'answer-hint' }, [answerHint(c)]),
+    ]),
+  ]);
 }
 
 function cardShadow(c) {
-  return h('div', {}, [
-    h('div', { class: 'dim', style: 'margin-bottom:8px' }, ['跟读 · 说出来']),
-    h('div', { class: 'card' }, [
-      c.image ? h('img', { src: c.image, style: 'width:100%;border-radius:10px', alt: '' }) : null,
-      h('div', { style: 'margin-top:10px;font-size:17px;text-align:center' }, [c.text]),
-      h('div', { class: 'dim', style: 'text-align:center' }, [c.meaning_zh]),
-    ]),
-    h('button', { class: 'play', onclick: e => play(c.prompt_audio, e.currentTarget) },
-      ['🔊 先听一遍']),
-    h('div', { class: 'dim', style: 'margin:10px 0;text-align:center' },
-      ['跟读评分还没接（第二批）。自己念一遍，然后点下面。']),
-    h('div', { class: 'row', style: 'gap:10px' }, [
-      h('button', { class: 'big', style: 'flex:1',
-                    onclick: () => answerCard(false) }, ['念不出来']),
-      h('button', { class: 'primary big', style: 'flex:2',
-                    onclick: () => answerCard(true) }, ['念好了 →']),
+  return h('main', { class: 'lesson-main single' }, [
+    h('section', { class: 'panel-card' }, [
+      h('div', { class: 'panel-label' }, [
+        h('b', {}, ['跟读']),
+        h('span', {}, ['说出来，记住它']),
+      ]),
+      h('div', { class: 'shadow-layout' }, [
+        c.image
+          ? h('div', { class: 'shadow-media' },
+              [h('img', { src: c.image, alt: '' })])
+          : h('div', { class: 'shadow-media' },
+              [h('div', { class: 'prompt-echo' }, ['🗣️'])]),
+        h('div', { class: 'shadow-target' }, [
+          h('div', { class: 'shadow-text' }, [c.text]),
+          c.meaning_zh ? h('div', { class: 'dim' }, [c.meaning_zh]) : null,
+        ]),
+      ]),
+      h('div', { class: 'prompt-actions center' }, [
+        h('button', {
+          class: 'play', style: 'max-width:320px',
+          onclick: e => play(c.prompt_audio, e.currentTarget),
+        }, ['🔊 先听一遍']),
+      ]),
+      h('div', { class: 'shadow-note' },
+        ['跟读评分还没接（第二批）。自己念一遍，然后点下面。']),
+      h('div', { class: 'lesson-actions' }, [
+        h('button', { class: 'big', style: 'flex:1',
+                      onclick: () => answerCard(false) }, ['念不出来']),
+        h('button', { class: 'primary big', style: 'flex:2',
+                      onclick: () => answerCard(true) }, ['念好了 →']),
+      ]),
     ]),
   ]);
 }
 
 function cardPassive(c) {
-  return h('div', {}, [
-    h('div', { class: 'dim', style: 'margin-bottom:8px' }, ['中场 · 歇一下，只听不答']),
-    c.image ? h('div', { class: 'card' },
-      [h('img', { src: c.image, style: 'width:100%;border-radius:10px', alt: '' })]) : null,
-    h('button', { class: 'play',
-                  onclick: e => playSeq(c.audio_clips, e.currentTarget) },
-      ['🎬 播放原片片段']),
-    h('button', { class: 'primary wide big', style: 'margin-top:12px',
-                  onclick: advance }, ['继续 →']),
+  return h('main', { class: 'lesson-main single' }, [
+    h('section', { class: 'panel-card single-card' }, [
+      h('div', { class: 'panel-label' }, [
+        h('b', {}, ['中场休息']),
+        h('span', {}, ['只听不答']),
+      ]),
+      c.image
+        ? h('div', { class: 'shadow-media', style: 'flex:1;min-height:0' },
+            [h('img', { src: c.image, alt: '' })])
+        : h('div', { class: 'shadow-media', style: 'flex:1;min-height:0' },
+            [h('div', { class: 'prompt-echo' }, ['🎬'])]),
+      h('div', { class: 'lead', style: 'margin-top:14px' },
+        ['歇一下，看画面听原片。']),
+      h('div', { class: 'lesson-actions' }, [
+        h('button', {
+          class: 'play', style: 'flex:2',
+          onclick: e => playSeq(c.audio_clips, e.currentTarget),
+        }, ['🎬 播放原片片段']),
+        h('button', { class: 'primary big', style: 'flex:1',
+                      onclick: advance }, ['继续 →']),
+      ]),
+    ]),
   ]);
 }
 
 function cardAssess(c) {
-  return h('div', {}, [
-    h('div', { class: 'dim', style: 'margin-bottom:8px' }, ['场景盲听']),
-    h('div', { class: 'card' }, [
-      h('div', {}, ['刚才学的这几句，现在听原速原声 —— 听懂多少？']),
-      h('button', { class: 'play', style: 'margin-top:12px',
-                    onclick: e => playSeq(c.audio_clips, e.currentTarget) },
-        [`🔊 播放原声（${c.audio_clips.length} 句）`]),
-    ]),
-    h('div', { class: 'row', style: 'gap:8px' }, [
-      h('button', { class: 'big', style: 'flex:1', onclick: () => assess(1) }, ['听懂一点']),
-      h('button', { class: 'big', style: 'flex:1', onclick: () => assess(2) }, ['一半']),
-      h('button', { class: 'primary big', style: 'flex:1', onclick: () => assess(3) }, ['大部分']),
+  return h('main', { class: 'lesson-main single' }, [
+    h('section', { class: 'panel-card single-card' }, [
+      h('div', { class: 'panel-label' }, [
+        h('b', {}, ['场景盲听']),
+        h('span', {}, [`${c.audio_clips.length} 句原声连放`]),
+      ]),
+      h('div', { class: 'lead' },
+        ['刚才学的这几句，现在听原速原声 —— 听懂多少？']),
+      h('div', { class: 'prompt-actions center', style: 'margin-top:16px' }, [
+        h('button', {
+          class: 'play', style: 'max-width:340px',
+          onclick: e => playSeq(c.audio_clips, e.currentTarget),
+        }, ['🔊 播放原声']),
+      ]),
+      h('div', { class: 'self-grid' }, [
+        h('button', { class: 'big', onclick: () => assess(1) }, ['听懂一点']),
+        h('button', { class: 'big', onclick: () => assess(2) }, ['一半']),
+        h('button', { class: 'primary big', onclick: () => assess(3) }, ['大部分']),
+      ]),
     ]),
   ]);
 }
 
 function cardReport() {
-  return h('div', { class: 'card' }, [
-    h('h2', {}, ['这节课上完了']),
-    h('button', { class: 'primary wide big', onclick: finishLesson }, ['看课后报告 →']),
+  return h('main', { class: 'lesson-main single' }, [
+    h('section', { class: 'panel-card report-card' }, [
+      h('div', { class: 'big-emoji' }, ['🏁']),
+      h('h2', {}, ['这节课上完了']),
+      h('div', { class: 'dim' }, ['去看看这节课学了多少、下次要复习什么。']),
+      h('div', { class: 'lesson-actions', style: 'width:100%;max-width:360px' }, [
+        h('button', { class: 'primary wide big', onclick: finishLesson },
+          ['看课后报告 →']),
+      ]),
+    ]),
   ]);
 }
 
@@ -688,6 +859,8 @@ async function refreshStatus() {
 function gotoMain() {
   // 有进行中的课就直接续上，否则看有没有课程表
   if (S.status && S.status.in_lesson) {
+    const p = S.status.lesson_progress || {};
+    S.lessonIndex = p.index != null ? p.index : null;
     api('/api/lesson/current').then(c => {
       S.card = c; resetCardState(); S.view = 'card'; render(); autoPlay();
     });
@@ -734,7 +907,7 @@ async function pauseLesson() {
   clearTimeout(S.stuckTimer);
   try {
     S.status = await api('/api/lesson/pause', {});
-    S.card = null; resetCardState();
+    S.card = null; S.lessonIndex = null; resetCardState();
     S.view = 'lessons'; render();
     toast('已保存进度，下次从这张卡继续', 2500);
   } catch (e) { toast('退出失败：' + e.message, 3000); }
@@ -743,6 +916,7 @@ async function pauseLesson() {
 async function startLesson(index) {
   try {
     S.card = await api(`/api/lesson/${index}/start`, {});
+    S.lessonIndex = index;
     resetCardState();
     S.view = 'card'; render();
     autoPlay();
@@ -842,6 +1016,8 @@ document.addEventListener('keydown', e => {
 // ---------- 启动 ----------
 (async () => {
   try {
+    try { S.muted = localStorage.getItem('ailesson.muted') === '1'; } catch (_) {}
+    au.muted = S.muted;
     S.users = await api('/api/users');
     // 没有用户先建一个；有了直接进学习
     if (!S.users.current_id) {
