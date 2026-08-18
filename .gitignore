@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 虚拟环境
+.venv/
+
+# 系统文件
+.DS_Store
+
+# 运行期数据 + 内容生产数据（大、且多从上游生成）
+data/
+
+# 音频采样（开发调试用）
+audio/

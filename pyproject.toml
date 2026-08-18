@@ -1,0 +1,16 @@
+[project]
+name = "ailesson"
+version = "0.1.0"
+description = "AI 英语课程引擎：一集影视 → N 节课"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "llm: 需要真实 LLM 调用的测试（慢、花钱），默认跳过，用 -m llm 单独跑",
+]
+addopts = "-m 'not llm' -q"
+
+[tool.setuptools.packages.find]
+where = ["src"]
