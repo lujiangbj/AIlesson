@@ -32,3 +32,17 @@ class TestLandscapeLessonShell:
     def test_常驻静音开关(self):
         assert "toggleMute" in JS
         assert "au.muted" in JS
+
+    def test_finished精简载荷不会把课堂渲染炸掉(self):
+        # /api/lesson/current 在结束态只返回 {"finished": true}，
+        # 没有 stats/segment/total；顶栏和进度轨必须能容忍。
+        assert "c.stats || { correct: 0" in JS
+        assert "c.segment || { index: 16" in JS
+        assert "c.total || cursor + 1" in JS
+
+    def test_进度轨自动滚到当前环节(self):
+        assert "rail.scrollLeft = cur.offsetLeft" in JS
+
+    def test_页签标题跟随当前素材且不请求_favicon(self):
+        assert "document.title = 'AIlesson · ' + S.status.episode.title" in JS
+        assert 'rel="icon"' in HTML

@@ -116,6 +116,9 @@ async function playSeq(srcs, btn) {
 function render() {
   const y = window.scrollY;
   app.innerHTML = '';
+  if (S.status && S.status.episode && S.status.episode.title) {
+    document.title = 'AIlesson · ' + S.status.episode.title;
+  }
   const v = { users: viewUsers, home: viewHome, check: viewCheck,
               probe: viewProbe, lessons: viewLessons, card: viewCard,
               report: viewReport }[S.view];
@@ -123,6 +126,15 @@ function render() {
   document.body.classList.toggle('checking', S.view === 'check' && !S.packing);
   document.body.classList.toggle('classing', S.view === 'card');
   if (S.view === 'check') window.scrollTo(0, y);
+  if (S.view === 'card') {
+    requestAnimationFrame(() => {
+      const rail = document.querySelector('.seg-rail');
+      const cur = rail && rail.querySelector('.seg-pill.cur');
+      if (rail && cur) {
+        rail.scrollLeft = cur.offsetLeft - rail.clientWidth / 2 + cur.clientWidth / 2;
+      }
+    });
+  }
 }
 
 // 当前用户条：除了用户页和上课中，各页顶部都显示，方便随时切
@@ -487,6 +499,8 @@ function lessonTitle() {
 
 function lessonTop(c) {
   const idx = S.lessonIndex;
+  const stats = c.stats || { correct: 0, wrong: 0 };
+  const seg = c.segment || { index: 16, title: '收尾报告', minutes: 1 };
   return h('header', { class: 'lesson-top' }, [
     h('button', {
       class: 'icon-btn exit-btn', title: '保存进度并退出课堂',
@@ -498,14 +512,14 @@ function lessonTop(c) {
         lessonTitle() ? ' · ' + lessonTitle() : '',
       ]),
       h('div', { class: 'lesson-seg' }, [
-        '环节 ', h('b', {}, [String(c.segment.index), '/16']),
-        ' ', c.segment.title, ' · 约 ', c.segment.minutes, ' 分钟',
+        '环节 ', h('b', {}, [String(seg.index), '/16']),
+        ' ', seg.title, ' · 约 ', seg.minutes, ' 分钟',
       ]),
     ]),
     h('div', { class: 'lesson-head-right' }, [
       h('span', { class: 'score-pill' }, [
-        h('span', { class: 'ok' }, ['✓ ', c.stats.correct]),
-        h('span', { class: 'bad' }, ['✗ ', c.stats.wrong]),
+        h('span', { class: 'ok' }, ['✓ ', stats.correct]),
+        h('span', { class: 'bad' }, ['✗ ', stats.wrong]),
       ]),
       h('button', {
         class: 'icon-btn', title: S.muted ? '取消静音' : '静音',
@@ -516,23 +530,26 @@ function lessonTop(c) {
 }
 
 function lessonProgress(c) {
-  const shown = Math.min(c.cursor + 1, c.total);
-  const pct = c.total ? Math.round(c.cursor / c.total * 100) : 0;
+  const cursor = c.cursor || 0;
+  const total = c.total || cursor + 1;
+  const segIndex = (c.segment && c.segment.index) || SEGMENT_UI.length;
+  const shown = Math.min(cursor + 1, total);
+  const pct = total ? Math.round(cursor / total * 100) : 0;
   return h('div', { class: 'lesson-progress' }, [
     h('div', { class: 'seg-rail' },
       SEGMENT_UI.map(seg => {
-        const state = seg.i < c.segment.index ? 'done'
-          : seg.i === c.segment.index ? 'cur' : '';
+        const state = seg.i < segIndex ? 'done'
+          : seg.i === segIndex ? 'cur' : '';
         return h('div', {
           class: 'seg-pill ' + state,
           title: `环节 ${seg.i} · ${seg.t}`,
         }, [
-          h('span', { class: 'seg-n' }, [seg.i < c.segment.index ? '✓' : seg.i]),
+          h('span', { class: 'seg-n' }, [seg.i < segIndex ? '✓' : seg.i]),
           h('span', {}, [seg.t]),
         ]);
       })),
     h('div', { class: 'bar-row' }, [
-      h('span', {}, [`第 ${shown} / ${c.total} 张`]),
+      h('span', {}, [`第 ${shown} / ${total} 张`]),
       h('div', { class: 'bar' }, [h('i', { style: `width:${pct}%` })]),
       h('span', {}, [`${pct}%`]),
     ]),
