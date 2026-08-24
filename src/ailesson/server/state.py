@@ -35,8 +35,8 @@ ROOT = Path(__file__).resolve().parents[3]
 # 素材源。Peppa 走 MVP 目录（只读，NFR-4），Friends 走本项目产出的 lessons/
 MVP_ROOT = Path(os.environ.get(
     "AILESSON_MVP_ROOT",
-    "/Users/haillelou/Claude/nowordenglish/illit-english-mvp",
-))
+    "~/Claude/nowordenglish/illit-english-mvp",
+)).expanduser()
 
 DATA = ROOT / "data"
 WEB_DIR = ROOT / "web"

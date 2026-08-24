@@ -36,7 +36,7 @@ PRD 落后于代码 = 缺陷。
 
 ### 1.3 素材数据层零改动
 
-素材在 `/Users/haillelou/Claude/nowordenglish/illit-english-mvp/`，**只读**。
+素材在 `~/Claude/nowordenglish/illit-english-mvp/`，**只读**。
 不改它的 JSON，不改它的 assets，不往那个目录写东西。
 需要新字段就在本项目里推导（例：`episode.words_covered_by_sentence()`）。
 

@@ -34,7 +34,7 @@
 
 ## 3. 素材现状（E01 已清点）
 
-`/Users/haillelou/Claude/nowordenglish/illit-english-mvp/`
+`~/Claude/nowordenglish/illit-english-mvp/`
 
 | 资产 | 数量 | 字段 |
 |---|---|---|

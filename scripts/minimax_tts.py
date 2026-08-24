@@ -10,6 +10,7 @@ Minimax 流式 TTS 工具（实测验证版）
   - 音色 yfd-xiaokui-06（少儿向女声）
   - 关键坑: requests.Session + trust_env=False 绕开系统代理（proxy-aws-us 美国代理会导致 10 倍延迟）
 """
+import getpass
 import sys, os, time, base64, json, requests, subprocess
 
 GROUP_ID = "1728712324971237986"
@@ -23,7 +24,7 @@ def get_key():
         return key
     try:
         return subprocess.run(
-            ["/usr/bin/security", "find-generic-password", "-a", "haillelou", "-s", "MINIMAX_KEY", "-w"],
+            ["/usr/bin/security", "find-generic-password", "-a", getpass.getuser(), "-s", "MINIMAX_KEY", "-w"],
             capture_output=True, text=True).stdout.strip()
     except Exception:
         return ""
@@ -32,7 +33,7 @@ def tts_stream(text, out_path=None, verbose=True):
     """合成文本为语音。out_path 给定时保存 mp3，否则只统计耗时。"""
     key = get_key()
     if not key:
-        raise SystemExit("未找到 MINIMAX_KEY：请设置环境变量或 `security add-generic-password -a haillelou -s MINIMAX_KEY -w '<key>'`")
+        raise SystemExit("未找到 MINIMAX_KEY：请设置环境变量或 `security add-generic-password -a $USER -s MINIMAX_KEY -w '<key>'`")
     s = requests.Session()
     s.trust_env = False  # 关键：绕开系统代理，否则走美国节点慢 10 倍
     s.headers.update({

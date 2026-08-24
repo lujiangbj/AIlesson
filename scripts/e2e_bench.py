@@ -7,6 +7,7 @@ LLM 选路（LLM_ENDPOINT 环境变量，默认 auto）:
   tunnel = 本地 Model Tunnel 转发（家里可用，TTFT ~1.4s）
   auto   = 先试直连（2s 超时），失败回退 tunnel
 """
+import getpass
 import json, os, time, base64, requests, urllib.request, subprocess, shlex
 
 VENV = "/tmp/asr_demo_venv/bin/python"
@@ -24,7 +25,7 @@ def _tts_key():
     k = os.environ.get("MINIMAX_KEY")
     if k:
         return k
-    return subprocess.run(["/usr/bin/security", "find-generic-password", "-a", "haillelou", "-s", "MINIMAX_KEY", "-w"],
+    return subprocess.run(["/usr/bin/security", "find-generic-password", "-a", getpass.getuser(), "-s", "MINIMAX_KEY", "-w"],
         capture_output=True, text=True).stdout.strip()
 TTS_KEY = _tts_key()
 TTS_GROUP = "1728712324971237986"

@@ -11,9 +11,9 @@ import pytest
 MVP_ROOT = Path(
     os.environ.get(
         "AILESSON_MVP_ROOT",
-        "/Users/haillelou/Claude/nowordenglish/illit-english-mvp",
+        "~/Claude/nowordenglish/illit-english-mvp",
     )
-)
+).expanduser()
 
 
 @pytest.fixture(scope="session")
