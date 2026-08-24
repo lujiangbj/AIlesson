@@ -22,6 +22,24 @@ MAX_REVIEW = 9          # 复习点上限（三层合计）
 MAX_SPOT_CHECK = 3
 
 
+def _fill_choices(all_ids: list[str], cid: str, pool: list[str]) -> tuple[str, ...]:
+    """4 选 1 的选项：先取同池条目（场景相近、干扰强），不足拿全集补。
+
+    和词卡的 _choices_for_word 同款策略。一节只有 2 个短语时也必须凑满
+    4 个 —— 否则 2 选 1 蒙对率 50%，1 个短语时只剩唯一选项（点谁都对）。
+    """
+    out = [cid]
+    for x in pool:
+        if x != cid and x not in out:
+            out.append(x)
+    for x in all_ids:
+        if len(out) >= 4:
+            break
+        if x != cid and x not in out:
+            out.append(x)
+    return tuple(out[:4])
+
+
 class Seg3(Enum):
     REVIEW = "review"
     SPOT_CHECK = "spot_check"
@@ -273,19 +291,19 @@ def _build_cards3(
     def chunk_card(seg: int, kind: str, cid: str, pool: list[str],
                    bonus: bool = False) -> Card:
         c = ep.chunk(cid)
-        others = [x for x in pool if x != cid] or [x.id for x in ep.chunks if x.id != cid]
         return Card(
             card_id=f"s{seg}:{kind}:{cid}", segment_index=seg, kind=kind,
             domain="chunks", item_id=cid, target_words=tuple(c.covers_words),
             prompt_audio=c.audio_tts, prompt_audio_slow=c.audio_tts_slow,
             image=c.image, meaning_zh=c.meaning_zh, text=c.text,
-            choices=tuple([cid, *others[:3]]), correct_id=cid, is_bonus=bonus,
+            choices=_fill_choices([x.id for x in ep.chunks], cid,
+                                  [x for x in pool if x != cid]),
+            correct_id=cid, is_bonus=bonus,
         )
 
     def sent_card(seg: int, kind: str, sid: str, pool: list[str],
                   bonus: bool = False) -> Card:
         s = ep.sentence(sid)
-        others = [x for x in pool if x != sid] or [x.id for x in ep.sentences if x.id != sid]
         return Card(
             card_id=f"s{seg}:{kind}:{sid}", segment_index=seg, kind=kind,
             domain="sentences", item_id=sid,
@@ -294,7 +312,9 @@ def _build_cards3(
             prompt_audio=s.audio_clip or s.audio_tts,
             prompt_audio_slow=s.audio_tts_slow,
             image=s.image, meaning_zh=s.meaning_zh, text=s.text,
-            choices=tuple([sid, *others[:3]]), correct_id=sid, is_bonus=bonus,
+            choices=_fill_choices([x.id for x in ep.sentences], sid,
+                                  [x for x in pool if x != sid]),
+            correct_id=sid, is_bonus=bonus,
         )
 
     # 1 · 复习（三层混合，取较弱方向）

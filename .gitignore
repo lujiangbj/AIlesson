@@ -14,3 +14,5 @@ data/
 
 # 音频采样（开发调试用）
 audio/
+venv/
+.jspace/

@@ -214,6 +214,38 @@ class TestResume:
         assert snap["spot_picked"]["words"] == ["daddy"]
 
 
+class TestChoicePool:
+    """选项池：词是 4 选 1，短语句子也必须 4 选 1。
+
+    实测发现 chunk/sentence 卡只从本节池里取干扰项：一节 2 个短语就是
+    2 选 1，1 个短语只剩唯一选项（点谁都对）。和词一样从全集补足。
+    """
+
+    def test_短语选项至少4个且都在全集里(self, e01, cet6_spec):
+        cards = run_all(LessonRuntime3.build(e01, cet6_spec, Progress()))
+        chunk_ids = {c.id for c in e01.chunks}
+        for c in cards:
+            if c.domain == "chunks" and c.kind in ("chunk", "i2a"):
+                assert len(c.choices) == 4, f"{c.card_id}: {c.choices}"
+                assert set(c.choices) <= chunk_ids
+                assert c.correct_id in c.choices
+
+    def test_句子选项至少4个且都在全集里(self, e01, cet6_spec):
+        cards = run_all(LessonRuntime3.build(e01, cet6_spec, Progress()))
+        sent_ids = {s.id for s in e01.sentences}
+        for c in cards:
+            if c.domain == "sentences" and c.kind in ("sentence", "i2a"):
+                assert len(c.choices) == 4, f"{c.card_id}: {c.choices}"
+                assert set(c.choices) <= sent_ids
+                assert c.correct_id in c.choices
+
+    def test_正确答案在每个选项里只出现一次(self, e01, cet6_spec):
+        cards = run_all(LessonRuntime3.build(e01, cet6_spec, Progress()))
+        for c in cards:
+            if c.needs_answer and c.kind != "shadow":
+                assert c.choices.count(c.correct_id) == 1, c.card_id
+
+
 class TestBonus:
     def test_顺带条目各1题(self, e01):
         spec = LessonSpec3(
