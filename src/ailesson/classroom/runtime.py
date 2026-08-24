@@ -1,19 +1,33 @@
-"""三层课程运行时：词 / 短语 / 句子都是一等教学点。
+"""课堂运行时：按编排把一节课展开成卡序，并推进。
 
-替代 lesson.py 的「短语句子作为词的配套」模式。CET-6 用户的一节课可能一个生词
-都没有，全是短语和句子 —— 那也必须能正常跑完，且每个点都有完整的曝光形态。
+三层（词 / 短语 / 句子）都是一等教学点。CET-6 用户的一节课可能一个生词都没有，
+全是短语和句子 —— 那也必须能正常跑完，且每个点都有完整的曝光形态。
 
-每个教学点的曝光：听辨 → 反向 → 跟读（+ 句子还会在盲听里再听一遍）。
-课内仍不产生掌握（每方向只 1 次），沿用 lesson.py 的诚实原则。
+课内仍不产生掌握（每方向只 1 次），沿用诚实原则。
+
+## 编排驱动
+
+环节顺序、每环发什么卡、哪些环节计分，全从 `arrangement.Arrangement` 读。原先
+这些是写死的分支加魔数（`STREAK_SEGMENTS`、`in (3, 6, 10)`、`== 14`），现在
+运行时只认三样东西：环节的 `source`（内容从哪来）、`domains`（发哪几层）、
+`tool`（用哪件教具）。
+
+## 卡序必须确定性可重建（§10.5）
+
+快照不存卡，只存重建输入。`pick_review` 读 last_at/streak、`weaker_direction`
+读 streak，这些在上课过程中都在变 —— 所以它们的结果必须在建课时定死并落盘
+（`review_picked` / `spot_picked` / `dir_picked`），restore 时照抄，不许重算。
+
+编排本身也是重建输入的一部分，见 `arrangement.compatible()`。
 """
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
-from ailesson.classroom.cards import Card, _choices_for_word
+from ailesson.classroom.arrangement import DEFAULT, Arrangement, Step
+from ailesson.classroom.cards import Card, choices_for_item, choices_for_word
 from ailesson.contract.episode import Episode
 from ailesson.contract.lesson_spec import LessonSpec
 from ailesson.learner.progress import Progress
@@ -22,81 +36,13 @@ MAX_REVIEW = 9          # 复习点上限（三层合计）
 MAX_SPOT_CHECK = 3
 
 
-def _fill_choices(all_ids: list[str], cid: str, pool: list[str]) -> tuple[str, ...]:
-    """4 选 1 的选项：先取同池条目（场景相近、干扰强），不足拿全集补。
-
-    和词卡的 _choices_for_word 同款策略。一节只有 2 个短语时也必须凑满
-    4 个 —— 否则 2 选 1 蒙对率 50%，1 个短语时只剩唯一选项（点谁都对）。
-    """
-    out = [cid]
-    for x in pool:
-        if x != cid and x not in out:
-            out.append(x)
-    for x in all_ids:
-        if len(out) >= 4:
-            break
-        if x != cid and x not in out:
-            out.append(x)
-    return tuple(out[:4])
-
-
-class StepKind(Enum):
-    REVIEW = "review"
-    SPOT_CHECK = "spot_check"
-    WORD_A2I = "word_a2i"
-    WORD_I2A = "word_i2a"
-    WORD_SHADOW = "word_shadow"
-    CHUNK_A2I = "chunk"
-    CHUNK_I2A = "chunk_i2a"
-    CHUNK_SHADOW = "chunk_shadow"
-    INTERLUDE = "interlude"
-    SENTENCE_A2I = "sentence"
-    SENTENCE_I2A = "sentence_i2a"
-    SENTENCE_SHADOW = "sentence_shadow"
-    MIXED = "mixed"
-    REDO = "redo"
-    BLIND_LISTEN = "blind_listen"
-    REPORT = "report"
-
-
-@dataclass(frozen=True)
-class Step:
-    index: int
-    kind: StepKind
-    title: str
-    minutes: float
-
-
-SEGMENTS: tuple[Step, ...] = (
-    Step(1, StepKind.REVIEW, "开场 + 复习", 3.0),
-    Step(2, StepKind.SPOT_CHECK, "抽检", 1.0),
-    Step(3, StepKind.WORD_A2I, "生词首触", 2.0),
-    Step(4, StepKind.WORD_I2A, "生词反向", 1.5),
-    Step(5, StepKind.WORD_SHADOW, "生词跟读", 1.5),
-    Step(6, StepKind.CHUNK_A2I, "短语听辨", 3.0),
-    Step(7, StepKind.CHUNK_I2A, "短语反向", 2.0),
-    Step(8, StepKind.CHUNK_SHADOW, "短语跟读", 2.5),
-    Step(9, StepKind.INTERLUDE, "中场", 1.0),
-    Step(10, StepKind.SENTENCE_A2I, "句子原声", 3.5),
-    Step(11, StepKind.SENTENCE_I2A, "句子反向", 2.0),
-    Step(12, StepKind.SENTENCE_SHADOW, "句子跟读", 3.0),
-    Step(13, StepKind.MIXED, "混打", 2.0),
-    Step(14, StepKind.REDO, "错题重做", 1.5),
-    Step(15, StepKind.BLIND_LISTEN, "场景盲听", 1.5),
-    Step(16, StepKind.REPORT, "收尾报告", 1.0),
-)
-SEG_BY_INDEX = {s.index: s for s in SEGMENTS}
-
-# 计 streak 的环节：首触和反向。跟读练产出、混打重做是巩固，都不计。
-STREAK_SEGMENTS = {1, 2, 3, 4, 6, 7, 10, 11}
-
-
 @dataclass
 class LessonRuntime:
     episode_id: str
     lesson_index: int
     cards: list[Card]
     progress: Progress
+    arrangement: Arrangement = DEFAULT
     cursor: int = 0
     stats: dict[str, int] = field(
         default_factory=lambda: {"asked": 0, "correct": 0, "wrong": 0,
@@ -119,13 +65,14 @@ class LessonRuntime:
         known: dict[str, list[str]] | None = None,
         review: dict[str, list[str]] | None = None,
         dirs: dict[str, str] | None = None,
+        arrangement: Arrangement = DEFAULT,
     ) -> LessonRuntime:
         cards, proto, picked = _build_cards(
-            ep, spec, progress, known or {}, review, dirs
+            ep, spec, progress, known or {}, review, dirs, arrangement
         )
         return cls(
             episode_id=ep.id, lesson_index=spec.index,
-            cards=cards, progress=progress, _proto=proto,
+            cards=cards, progress=progress, arrangement=arrangement, _proto=proto,
             review_picked=picked["review"], spot_picked=picked["spot"],
             dir_picked=picked["dirs"],
         )
@@ -134,6 +81,7 @@ class LessonRuntime:
     def restore(
         cls, ep: Episode, spec: LessonSpec, progress: Progress,
         snap: dict[str, Any], known: dict[str, list[str]] | None = None,
+        arrangement: Arrangement = DEFAULT,
     ) -> LessonRuntime:
         # 复习/抽检的选择必须从快照读回，不能重新挑：pick_review 的排序依赖
         # last_at 和 streak，上课过程中它们已经变了，重挑会得到不同的卡序 →
@@ -143,6 +91,7 @@ class LessonRuntime:
             known=snap.get("spot_picked") or known,
             review=snap.get("review_picked"),
             dirs=snap.get("dir_picked"),
+            arrangement=arrangement,
         )
         rt.cursor = snap.get("cursor", 0)
         rt.stats = dict(snap.get("stats", rt.stats))
@@ -169,6 +118,8 @@ class LessonRuntime:
             "review_picked": self.review_picked,
             "spot_picked": self.spot_picked,
             "dir_picked": self.dir_picked,
+            # 编排身份：改了编排的旧快照不许重建（§10.5 的延伸）
+            **self.arrangement.stamp(),
         }
 
     # ---- 推进 ----
@@ -177,11 +128,19 @@ class LessonRuntime:
     def finished(self) -> bool:
         return self.cursor >= len(self.cards)
 
+    def step_of(self, card: Card) -> Step:
+        return self.arrangement.step(card.step_index)
+
+    def _redo_index(self) -> int | None:
+        return next((s.index for s in self.arrangement.steps
+                     if s.source == "redo"), None)
+
     def current(self) -> Card | None:
         if self.finished:
             return None
         card = self.cards[self.cursor]
-        if card.segment_index == 14 and not self._redo_built:
+        # 重做环节的卡要等走到这里才能建 —— 错题清单在那之前还在变
+        if card.step_index == self._redo_index() and not self._redo_built:
             self._redo_built = True
             self._insert_redo()
             if self.finished:
@@ -201,43 +160,47 @@ class LessonRuntime:
             self.advance()
             return
         at = at or int(time.time())
+        step = self.step_of(card)
 
         self.stats["asked"] += 1
         self.stats["correct" if correct else "wrong"] += 1
 
         key = f"{card.domain}:{card.item_id}"
-        if card.segment_index in (3, 6, 10) and key not in self._answered:
+        if step.first_touch and key not in self._answered:
             self._answered[key] = correct
             if correct and not card.is_bonus:
                 self.stats["first_try_correct"] += 1
 
-        direction = "i2a" if card.kind == "i2a" else "a2i"
-        if card.segment_index in STREAK_SEGMENTS:
-            if card.kind in ("a2i", "i2a", "chunk", "sentence"):
-                self.progress.record(card.domain, card.item_id, direction, correct, at)
+        direction = card.direction if card.direction != "none" else "a2i"
+        if step.scored and card.is_quiz:
+            self.progress.record(card.domain, card.item_id, direction, correct, at)
         elif not correct:
+            # 巩固环节不计正向 streak，但答错仍清零 —— 不计分不等于把错误藏起来
             self.progress.record(card.domain, card.item_id, direction, False, at)
 
         if not correct:
             pair = (card.domain, card.item_id)
             if pair not in self.wrong_items:
                 self.wrong_items.append(pair)
-            if card.segment_index == 2 and pair not in self.demoted:
+            if step.source == "spot" and pair not in self.demoted:
                 self.demoted.append(pair)
         self.advance()
 
     def self_assess(self, score: int) -> None:
         card = self.current()
-        if card is not None and card.kind == "assess":
+        if card is not None and card.interaction == "assess":
             self.blind_listen_score = score
             self.advance()
 
     def _insert_redo(self) -> None:
-        for c in [x for x in self.cards if x.segment_index == 14]:
+        redo_at = self._redo_index()
+        if redo_at is None:
+            return
+        for c in [x for x in self.cards if x.step_index == redo_at]:
             self.cards.remove(c)
         if not self.wrong_items:
             return
-        at = next((i for i, c in enumerate(self.cards) if c.segment_index > 14),
+        at = next((i for i, c in enumerate(self.cards) if c.step_index > redo_at),
                   len(self.cards))
         # 按教学顺序重做，不按错误发现顺序
         order = list(self._proto)
@@ -250,10 +213,12 @@ class LessonRuntime:
             proto = self._proto.get(k)
             if not proto:
                 continue
+            # 重做沿用首触那张卡的教具（编排里标的 INHERIT）
             new.append(
                 Card(
-                    card_id=f"redo:{k}", segment_index=14, kind=proto.kind,
+                    card_id=f"redo:{k}", step_index=redo_at, tool=proto.tool,
                     domain=proto.domain, item_id=proto.item_id,
+                    direction=proto.direction,
                     target_words=proto.target_words,
                     prompt_audio=proto.prompt_audio,
                     prompt_audio_slow=proto.prompt_audio_slow,
@@ -265,182 +230,264 @@ class LessonRuntime:
         self.cards[at:at] = new
 
 
-def _build_cards(
-    ep: Episode, spec: LessonSpec, progress: Progress,
-    known: dict[str, list[str]], review_in: dict[str, list[str]] | None = None,
-    dirs_in: dict[str, str] | None = None,
-) -> tuple[list[Card], dict[str, Card], dict[str, Any]]:
-    cards: list[Card] = []
-    proto: dict[str, Card] = {}
+# ---------------- 建卡 ----------------
 
-    words = list(spec.focus_words)
-    chunks = list(spec.chunk_ids)
-    sents = list(spec.sentence_ids)
 
-    def word_card(seg: int, kind: str, lemma: str, bonus: bool = False) -> Card:
-        w = ep.word(lemma)
+@dataclass
+class _Ctx:
+    """建卡过程中要传给各个发卡器的东西。"""
+
+    ep: Episode
+    spec: LessonSpec
+    progress: Progress
+    cards: list[Card] = field(default_factory=list)
+    proto: dict[str, Card] = field(default_factory=dict)
+    focus: dict[str, list[str]] = field(default_factory=dict)
+    review: dict[str, list[str]] = field(default_factory=dict)
+    spot: dict[str, list[str]] = field(default_factory=dict)
+    dirs: dict[str, str] = field(default_factory=dict)
+
+    def direction_for(self, dom: str, item_id: str) -> str:
+        """较弱方向。一次定死并落盘 —— 上课中 streak 在变，重算会翻转方向。"""
+        key = f"{dom}:{item_id}"
+        if key not in self.dirs:
+            self.dirs[key] = self.progress.weaker_direction(dom, item_id)
+        return self.dirs[key]
+
+    def all_ids(self, dom: str) -> list[str]:
+        if dom == "words":
+            return [w.lemma for w in self.ep.words]
+        if dom == "chunks":
+            return [c.id for c in self.ep.chunks]
+        return [s.id for s in self.ep.sentences]
+
+
+def _make_card(
+    ctx: _Ctx, step: Step, dom: str, item_id: str, pool: list[str],
+    *, bonus: bool = False, direction: str | None = None,
+) -> Card:
+    """按环节声明的教具造一张答题/跟读卡。"""
+    t = step.resolve(dom, direction)
+    ep = ctx.ep
+    cid = f"s{step.index}:{t.id}:{item_id}"
+
+    if dom == "words":
+        w = ep.word(item_id)
         return Card(
-            card_id=f"s{seg}:{kind}:{lemma}", segment_index=seg, kind=kind,
-            domain="words", item_id=lemma, target_words=(lemma,),
+            card_id=cid, step_index=step.index, tool=t.id, direction=t.direction,
+            domain="words", item_id=item_id, target_words=(item_id,),
             prompt_audio=w.audio, prompt_audio_slow=w.audio_slow,
             image="" if w.skip_image else w.image, meaning_zh=w.meaning_zh,
-            text=lemma, choices=_choices_for_word(ep, lemma, words),
-            correct_id=lemma, is_bonus=bonus,
+            text=item_id, choices=choices_for_word(ep, item_id, pool),
+            correct_id=item_id, is_bonus=bonus,
         )
-
-    def chunk_card(seg: int, kind: str, cid: str, pool: list[str],
-                   bonus: bool = False) -> Card:
-        c = ep.chunk(cid)
+    if dom == "chunks":
+        c = ep.chunk(item_id)
         return Card(
-            card_id=f"s{seg}:{kind}:{cid}", segment_index=seg, kind=kind,
-            domain="chunks", item_id=cid, target_words=tuple(c.covers_words),
+            card_id=cid, step_index=step.index, tool=t.id, direction=t.direction,
+            domain="chunks", item_id=item_id, target_words=tuple(c.covers_words),
             prompt_audio=c.audio_tts, prompt_audio_slow=c.audio_tts_slow,
             image=c.image, meaning_zh=c.meaning_zh, text=c.text,
-            choices=_fill_choices([x.id for x in ep.chunks], cid,
-                                  [x for x in pool if x != cid]),
-            correct_id=cid, is_bonus=bonus,
+            choices=choices_for_item(ctx.all_ids("chunks"), item_id,
+                                     [x for x in pool if x != item_id]),
+            correct_id=item_id, is_bonus=bonus,
         )
+    s = ep.sentence(item_id)
+    return Card(
+        card_id=cid, step_index=step.index, tool=t.id, direction=t.direction,
+        domain="sentences", item_id=item_id,
+        target_words=tuple(ep.words_covered_by_sentence(item_id)),
+        # 句子用原片切片，这是「听懂真实语流」的核心
+        prompt_audio=s.audio_clip or s.audio_tts,
+        prompt_audio_slow=s.audio_tts_slow,
+        image=s.image, meaning_zh=s.meaning_zh, text=s.text,
+        choices=choices_for_item(ctx.all_ids("sentences"), item_id,
+                                 [x for x in pool if x != item_id]),
+        correct_id=item_id, is_bonus=bonus,
+    )
 
-    def sent_card(seg: int, kind: str, sid: str, pool: list[str],
-                  bonus: bool = False) -> Card:
-        s = ep.sentence(sid)
-        return Card(
-            card_id=f"s{seg}:{kind}:{sid}", segment_index=seg, kind=kind,
-            domain="sentences", item_id=sid,
-            target_words=tuple(ep.words_covered_by_sentence(sid)),
-            # 句子用原片切片，这是「听懂真实语流」的核心
-            prompt_audio=s.audio_clip or s.audio_tts,
-            prompt_audio_slow=s.audio_tts_slow,
-            image=s.image, meaning_zh=s.meaning_zh, text=s.text,
-            choices=_fill_choices([x.id for x in ep.sentences], sid,
-                                  [x for x in pool if x != sid]),
-            correct_id=sid, is_bonus=bonus,
-        )
 
-    # 1 · 复习（三层混合，取较弱方向）
-    cand = {
-        "words": [w.lemma for w in ep.words],
-        "chunks": [c.id for c in ep.chunks],
-        "sentences": [s.id for s in ep.sentences],
-    }
-    exclude = {
-        "words": set(words) | set(spec.bonus_words),
-        "chunks": set(chunks) | set(spec.bonus_chunks),
-        "sentences": set(sents) | set(spec.bonus_sentences),
-    }
-    per = max(1, MAX_REVIEW // 3)
-    review: dict[str, list[str]] = {}
-    for dom in ("words", "chunks", "sentences"):
-        if review_in is not None:
-            # 续上：用当初挑好的，保证卡序一致
-            review[dom] = list(review_in.get(dom, []))
-        else:
-            review[dom] = progress.pick_review(
-                cand[dom], limit=per, domain=dom, exclude=exclude[dom]
+# ---- 发卡器：每种 source 一个 ----
+
+
+def _emit_focus(ctx: _Ctx, step: Step) -> None:
+    """本节正课教学点。首触环节额外发顺带点，并登记 proto 供重做用。"""
+    bonus_by_dom = ctx.spec.bonus_items()
+    for dom in step.domains:
+        pool = ctx.focus.get(dom, [])
+        for item_id in pool:
+            c = _make_card(ctx, step, dom, item_id, pool)
+            ctx.cards.append(c)
+            if step.first_touch:
+                ctx.proto[f"{dom}:{item_id}"] = c
+        if not step.first_touch:
+            continue
+        # 顺带点只在首触环节出 1 题，不跟读、不反向（FR-3.4）
+        exists = set(ctx.all_ids(dom))
+        for item_id in bonus_by_dom.get(dom, []):
+            if item_id in exists:
+                ctx.cards.append(
+                    _make_card(ctx, step, dom, item_id, pool, bonus=True)
+                )
+
+
+def _emit_review(ctx: _Ctx, step: Step) -> None:
+    """跨节复习，取较弱方向。"""
+    for dom in step.domains:
+        picked = ctx.review.get(dom, [])
+        for item_id in picked:
+            d = ctx.direction_for(dom, item_id)
+            ctx.cards.append(_make_card(ctx, step, dom, item_id, picked,
+                                        direction=d))
+
+
+def _emit_spot(ctx: _Ctx, step: Step) -> None:
+    """抽检已勾会的。答错要降级回待学池。"""
+    for dom in step.domains:
+        for item_id in ctx.spot.get(dom, []):
+            ctx.cards.append(
+                _make_card(ctx, step, dom, item_id, ctx.all_ids(dom))
             )
-    # 方向也要一次定死并落盘：weaker_direction 读 streak，上课中 streak 在变，
-    # 续上时重算会翻转方向 → 卡序变化。
-    dirs: dict[str, str] = dict(dirs_in or {})
 
-    def direction_for(dom: str, item_id: str) -> str:
-        key = f"{dom}:{item_id}"
-        if key not in dirs:
-            dirs[key] = progress.weaker_direction(dom, item_id)
-        return dirs[key]
 
-    for lemma in review["words"]:
-        cards.append(word_card(1, direction_for("words", lemma), lemma))
-    for cid in review["chunks"]:
-        d = direction_for("chunks", cid)
-        cards.append(chunk_card(1, "i2a" if d == "i2a" else "chunk", cid, review["chunks"]))
-    for sid in review["sentences"]:
-        d = direction_for("sentences", sid)
-        cards.append(sent_card(1, "i2a" if d == "i2a" else "sentence", sid, review["sentences"]))
+def _emit_mixed(ctx: _Ctx, step: Step) -> None:
+    """本节 + 复习混打，取较弱方向。巩固性质，不计 streak。"""
+    for dom in step.domains:
+        items = ctx.focus.get(dom, []) + ctx.review.get(dom, [])
+        pool = ctx.focus.get(dom) or ctx.review.get(dom, [])
+        for item_id in items:
+            d = ctx.direction_for(dom, item_id)
+            ctx.cards.append(_make_card(ctx, step, dom, item_id, pool,
+                                        direction=d))
 
-    # 2 · 抽检（已勾会的，各 1 题）
-    spot: dict[str, list[str]] = {
-        "words": [w for w in (known.get("words") or [])[:MAX_SPOT_CHECK]
-                  if w in {x.lemma for x in ep.words}],
-        "chunks": [c for c in (known.get("chunks") or [])[:MAX_SPOT_CHECK]
-                   if c in {x.id for x in ep.chunks}],
+
+def _emit_redo(ctx: _Ctx, step: Step) -> None:
+    """占位卡。真正的重做卡等走到这一环才建（错题清单在那之前还在变）。"""
+    ctx.cards.append(Card(
+        card_id=f"s{step.index}:placeholder", step_index=step.index,
+        tool="report", domain="words", item_id="", needs_answer=False,
+    ))
+
+
+def _emit_single(ctx: _Ctx, step: Step) -> None:
+    """中场：取本节第一个句子，放画面 + 原声，不答题。"""
+    sents = ctx.focus.get("sentences", [])
+    if not sents:
+        return
+    s = ctx.ep.sentence(sents[0])
+    t = step.resolve("sentences")
+    ctx.cards.append(Card(
+        card_id=f"s{step.index}:{t.id}", step_index=step.index, tool=t.id,
+        domain="sentences", item_id=s.id, image=s.image,
+        audio_clips=(s.audio_clip,), needs_answer=False,
+    ))
+
+
+def _emit_all(ctx: _Ctx, step: Step) -> None:
+    """盲听：本节全部句子连着放，学生自评听懂多少。"""
+    sents = ctx.focus.get("sentences", [])
+    if not sents:
+        return
+    t = step.resolve("sentences")
+    ctx.cards.append(Card(
+        card_id=f"s{step.index}:{t.id}", step_index=step.index, tool=t.id,
+        domain="sentences", item_id=",".join(sents),
+        audio_clips=tuple(ctx.ep.sentence(s).audio_clip for s in sents),
+        needs_answer=False,
+    ))
+
+
+def _emit_none(ctx: _Ctx, step: Step) -> None:
+    """报告等不需要教学点的环节。"""
+    t = step.resolve(step.domains[0] if step.domains else "words")
+    ctx.cards.append(Card(
+        card_id=f"s{step.index}:{t.id}", step_index=step.index, tool=t.id,
+        domain="words", item_id="", needs_answer=False,
+    ))
+
+
+_EMITTERS: dict[str, Callable[[_Ctx, Step], None]] = {
+    "focus": _emit_focus,
+    "review": _emit_review,
+    "spot": _emit_spot,
+    "mixed": _emit_mixed,
+    "redo": _emit_redo,
+    "single": _emit_single,
+    "all": _emit_all,
+    "none": _emit_none,
+}
+
+
+def _pick_review(
+    ctx: _Ctx, domains: tuple[str, ...], given: dict[str, list[str]] | None
+) -> dict[str, list[str]]:
+    """挑复习条目。
+
+    given 非空表示续上 —— 用当初挑好的，不重挑（§10.5）。
+    """
+    exclude = {
+        dom: set(ctx.focus.get(dom, []))
+        | set(ctx.spec.bonus_items().get(dom, []))
+        for dom in domains
     }
-    for lemma in spot["words"]:
-        cards.append(word_card(2, "a2i", lemma))
-    for cid in spot["chunks"]:
-        cards.append(chunk_card(2, "chunk", cid, [c.id for c in ep.chunks]))
-
-    # 3/4/5 · 生词
-    for lemma in words:
-        c = word_card(3, "a2i", lemma)
-        cards.append(c)
-        proto[f"words:{lemma}"] = c
-    for lemma in spec.bonus_words:
-        if lemma in {w.lemma for w in ep.words}:
-            cards.append(word_card(3, "a2i", lemma, bonus=True))
-    for lemma in words:
-        cards.append(word_card(4, "i2a", lemma))
-    for lemma in words:
-        cards.append(word_card(5, "shadow", lemma))
-
-    # 6/7/8 · 短语（一等教学点）
-    for cid in chunks:
-        c = chunk_card(6, "chunk", cid, chunks)
-        cards.append(c)
-        proto[f"chunks:{cid}"] = c
-    for cid in spec.bonus_chunks:
-        if cid in {x.id for x in ep.chunks}:
-            cards.append(chunk_card(6, "chunk", cid, chunks, bonus=True))
-    for cid in chunks:
-        cards.append(chunk_card(7, "i2a", cid, chunks))
-    for cid in chunks:
-        cards.append(chunk_card(8, "shadow", cid, chunks))
-
-    # 9 · 中场（降载）
-    if sents:
-        s = ep.sentence(sents[0])
-        cards.append(Card(
-            card_id="s9:interlude", segment_index=9, kind="passive",
-            domain="sentences", item_id=s.id, image=s.image,
-            audio_clips=(s.audio_clip,), needs_answer=False,
-        ))
-
-    # 10/11/12 · 句子（一等教学点）
-    for sid in sents:
-        c = sent_card(10, "sentence", sid, sents)
-        cards.append(c)
-        proto[f"sentences:{sid}"] = c
-    for sid in spec.bonus_sentences:
-        if sid in {x.id for x in ep.sentences}:
-            cards.append(sent_card(10, "sentence", sid, sents, bonus=True))
-    for sid in sents:
-        cards.append(sent_card(11, "i2a", sid, sents))
-    for sid in sents:
-        cards.append(sent_card(12, "shadow", sid, sents))
-
-    # 13 · 混打（本节 + 复习，取较弱方向）
-    for lemma in words + review["words"]:
-        cards.append(word_card(13, direction_for("words", lemma), lemma))
-    for cid in chunks + review["chunks"]:
-        d = direction_for("chunks", cid)
-        cards.append(chunk_card(13, "i2a" if d == "i2a" else "chunk", cid, chunks or review["chunks"]))
-
-    # 14 · 重做占位
-    cards.append(Card(card_id="s14:placeholder", segment_index=14, kind="passive",
-                      domain="words", item_id="", needs_answer=False))
-
-    # 15 · 盲听
-    if sents:
-        cards.append(Card(
-            card_id="s15:blind", segment_index=15, kind="assess",
-            domain="sentences", item_id=",".join(sents),
-            audio_clips=tuple(ep.sentence(s).audio_clip for s in sents),
-            needs_answer=False,
-        ))
-
-    # 16 · 报告
-    cards.append(Card(card_id="s16:report", segment_index=16, kind="report",
-                      domain="words", item_id="", needs_answer=False))
-    return cards, proto, {"review": review, "spot": spot, "dirs": dirs}
+    per = max(1, MAX_REVIEW // max(1, len(domains)))
+    out: dict[str, list[str]] = {}
+    for dom in domains:
+        if given is not None:
+            out[dom] = list(given.get(dom, []))
+        else:
+            out[dom] = ctx.progress.pick_review(
+                ctx.all_ids(dom), limit=per, domain=dom, exclude=exclude[dom]
+            )
+    return out
 
 
-__all__ = ["SEGMENTS", "SEG_BY_INDEX", "LessonRuntime", "Step", "StepKind"]
+def _pick_spot(
+    ctx: _Ctx, domains: tuple[str, ...], known: dict[str, list[str]]
+) -> dict[str, list[str]]:
+    """挑抽检条目：已勾会的里取前几个，且必须在本集素材里存在。"""
+    out: dict[str, list[str]] = {}
+    for dom in domains:
+        exists = set(ctx.all_ids(dom))
+        out[dom] = [x for x in (known.get(dom) or [])[:MAX_SPOT_CHECK]
+                    if x in exists]
+    return out
+
+
+def _build_cards(
+    ep: Episode, spec: LessonSpec, progress: Progress,
+    known: dict[str, list[str]],
+    review_in: dict[str, list[str]] | None = None,
+    dirs_in: dict[str, str] | None = None,
+    arr: Arrangement = DEFAULT,
+) -> tuple[list[Card], dict[str, Card], dict[str, Any]]:
+    """按编排把一节课展开成卡序。
+
+    编排决定顺序和每环用什么教具；「内容从哪来」按 source 分派给发卡器。
+    原先这里是 175 行写死的分支，环节序号当魔数散在其中。
+    """
+    ctx = _Ctx(ep=ep, spec=spec, progress=progress,
+               focus=spec.items(), dirs=dict(dirs_in or {}))
+
+    # 复习和抽检的选择要先定死（它们依赖会变的 streak / last_at），
+    # 然后才能建卡 —— 也是发卡器之间唯一的共享状态
+    review_domains = next((s.domains for s in arr.steps if s.source == "review"), ())
+    spot_domains = next((s.domains for s in arr.steps if s.source == "spot"), ())
+    ctx.review = _pick_review(ctx, review_domains, review_in)
+    ctx.spot = _pick_spot(ctx, spot_domains, known)
+
+    for step in arr.steps:
+        emit = _EMITTERS.get(step.source)
+        if emit is None:
+            raise ValueError(
+                f"环节 {step.index}（{step.title}）的内容来源 "
+                f"{step.source!r} 没有对应的发卡器"
+            )
+        emit(ctx, step)
+
+    return ctx.cards, ctx.proto, {
+        "review": ctx.review, "spot": ctx.spot, "dirs": ctx.dirs,
+    }
+
+
+__all__ = ["MAX_REVIEW", "MAX_SPOT_CHECK", "LessonRuntime"]

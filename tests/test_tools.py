@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from ailesson.classroom.tools import (
+from ailesson.contract.tools import (
     INTERACTIONS,
     TOOLS,
     Tool,

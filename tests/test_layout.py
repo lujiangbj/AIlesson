@@ -81,8 +81,8 @@ class TestDependencyDirection:
 
 class TestPaths:
     def test_ROOT_指向项目根(self) -> None:
-        """app.py 进子目录后 parents[] 层数变了，这里钉死。"""
-        from ailesson.server.app import ROOT
+        """state.py 在 server/ 下，parents[] 层数容易数错，这里钉死。"""
+        from ailesson.server.state import ROOT
 
         assert (ROOT / "pyproject.toml").exists(), f"ROOT 错了：{ROOT}"
         assert (ROOT / "web").is_dir(), f"ROOT 错了：{ROOT}"

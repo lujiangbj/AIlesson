@@ -65,7 +65,7 @@ class TestCET6Flow:
             n = 0
             while (c := rt.current()) is not None and n < 300:
                 n += 1
-                if c.kind == "assess":
+                if c.interaction == "assess":
                     rt.self_assess(3)
                 elif c.needs_answer:
                     rt.answer(correct=True)
@@ -79,7 +79,7 @@ class TestCET6Flow:
         """实跑发现：报告写 "s16 guess_what weve_been_doing"，用户看不懂。"""
         rt = session.start_lesson(1)
         while (c := rt.current()) is not None:
-            rt.self_assess(2) if c.kind == "assess" else (
+            rt.self_assess(2) if c.interaction == "assess" else (
                 rt.answer(False) if c.needs_answer else rt.advance())
         r = session.finish_lesson(rt)
         assert r.review_next, "全答错该有复习项"
@@ -95,7 +95,7 @@ class TestCET6Flow:
     def test_报告口径是教学点(self, session):
         rt = session.start_lesson(1)
         while (c := rt.current()) is not None:
-            rt.self_assess(2) if c.kind == "assess" else (
+            rt.self_assess(2) if c.interaction == "assess" else (
                 rt.answer(True) if c.needs_answer else rt.advance())
         r = session.finish_lesson(rt)
         spec = session.spec_for(1)
@@ -110,7 +110,7 @@ class TestCET6Flow:
         rt = session.start_lesson(1)
         target = None
         while (c := rt.current()) is not None:
-            if c.segment_index == 2:
+            if c.step_index == 2:
                 target = (c.domain, c.item_id)
                 rt.answer(correct=False)
                 break
@@ -118,7 +118,7 @@ class TestCET6Flow:
         if target is None:
             pytest.skip("本节没有抽检卡")
         while (c := rt.current()) is not None:
-            rt.self_assess(3) if c.kind == "assess" else (
+            rt.self_assess(3) if c.interaction == "assess" else (
                 rt.answer(True) if c.needs_answer else rt.advance())
         session.finish_lesson(rt)
         dom, item = target
@@ -128,7 +128,7 @@ class TestCET6Flow:
         for l in session.plan.lessons:
             rt = session.start_lesson(l.index)
             while (c := rt.current()) is not None:
-                rt.self_assess(3) if c.kind == "assess" else (
+                rt.self_assess(3) if c.interaction == "assess" else (
                     rt.answer(True) if c.needs_answer else rt.advance())
             session.finish_lesson(rt)
         p = session.progress

@@ -6,7 +6,7 @@
 import pytest
 
 from ailesson.contract.episode import load_episode
-from ailesson.classroom.runtime import SEGMENTS, LessonRuntime
+from ailesson.classroom.runtime import LessonRuntime
 from ailesson.contract.lesson_spec import LessonSpec
 from ailesson.learner.progress import Progress
 
@@ -42,25 +42,13 @@ def run_all(rt, correct=True):
     seen = []
     while (c := rt.current()) is not None:
         seen.append(c)
-        if c.kind == "assess":
+        if c.interaction == "assess":
             rt.self_assess(3)
         elif c.needs_answer:
             rt.answer(correct=correct)
         else:
             rt.advance()
     return seen
-
-
-class TestSegments:
-    def test_环节表覆盖三层(self):
-        kinds = {s.kind.value for s in SEGMENTS}
-        assert "word_a2i" in kinds
-        assert "chunk" in kinds
-        assert "sentence" in kinds
-
-    def test_总时长约30分钟(self):
-        total = sum(s.minutes for s in SEGMENTS)
-        assert 26 <= total <= 34, total
 
 
 class TestCET6Lesson:
@@ -75,15 +63,17 @@ class TestCET6Lesson:
     def test_短语有完整形态(self, cards, cet6_spec):
         """短语升级为一等教学点：听辨 + 反向 + 跟读。"""
         for cid in cet6_spec.chunk_ids:
-            kinds = {c.kind for c in cards if c.item_id == cid}
-            assert "chunk" in kinds, cid
-            assert "shadow" in kinds, cid
+            tools = {c.tool for c in cards if c.item_id == cid}
+            assert "listen_pick_meaning" in tools, cid
+            assert "recall_pick_audio" in tools, cid
+            assert "shadow" in tools, cid
 
     def test_句子有完整形态(self, cards, cet6_spec):
         for sid in cet6_spec.sentence_ids:
-            kinds = {c.kind for c in cards if c.item_id == sid}
-            assert "sentence" in kinds, sid
-            assert "shadow" in kinds, sid
+            tools = {c.tool for c in cards if c.item_id == sid}
+            assert "listen_pick_meaning" in tools, sid
+            assert "recall_pick_audio" in tools, sid
+            assert "shadow" in tools, sid
 
     def test_每个教学点至少3次曝光(self, cards, cet6_spec):
         for pid in (cet6_spec.focus_words + cet6_spec.chunk_ids
@@ -92,11 +82,12 @@ class TestCET6Lesson:
             assert len(hits) >= 3, f"{pid} 只出现 {len(hits)} 次"
 
     def test_句子用原片切片(self, cards):
-        s = next(c for c in cards if c.kind == "sentence")
+        s = next(c for c in cards
+                 if c.domain == "sentences" and c.tool == "listen_pick_meaning")
         assert "sentences_audio_clip" in s.prompt_audio
 
     def test_盲听放本节句子(self, cards, cet6_spec):
-        blind = [c for c in cards if c.kind == "assess"]
+        blind = [c for c in cards if c.interaction == "assess"]
         assert len(blind) == 1
         assert len(blind[0].audio_clips) == len(cet6_spec.sentence_ids)
 
@@ -118,7 +109,7 @@ class TestNoWordLesson:
 
     def test_短语句子仍有跟读(self, e01, no_word_spec):
         cards = run_all(LessonRuntime.build(e01, no_word_spec, Progress()))
-        shadows = [c for c in cards if c.kind == "shadow"]
+        shadows = [c for c in cards if c.tool == "shadow"]
         assert len(shadows) >= 3
 
     def test_统计不为空(self, e01, no_word_spec):
@@ -158,14 +149,14 @@ class TestReview:
         p.record("chunks", "im_peppa", "a2i", True)
         p.record("sentences", "s01", "a2i", True)
         rt = LessonRuntime.build(e01, cet6_spec, p)
-        review = [c for c in rt.cards if c.segment_index == 1]
+        review = [c for c in rt.cards if c.step_index == 1]
         assert {c.domain for c in review} == {"words", "chunks", "sentences"}
 
     def test_本节内容不进复习(self, e01, cet6_spec):
         p = Progress()
         p.record("chunks", "muddy_puddles", "a2i", True)
         rt = LessonRuntime.build(e01, cet6_spec, p)
-        review = [c.item_id for c in rt.cards if c.segment_index == 1]
+        review = [c.item_id for c in rt.cards if c.step_index == 1]
         assert "muddy_puddles" not in review
 
 
@@ -225,7 +216,7 @@ class TestChoicePool:
         cards = run_all(LessonRuntime.build(e01, cet6_spec, Progress()))
         chunk_ids = {c.id for c in e01.chunks}
         for c in cards:
-            if c.domain == "chunks" and c.kind in ("chunk", "i2a"):
+            if c.domain == "chunks" and c.is_quiz:
                 assert len(c.choices) == 4, f"{c.card_id}: {c.choices}"
                 assert set(c.choices) <= chunk_ids
                 assert c.correct_id in c.choices
@@ -234,7 +225,7 @@ class TestChoicePool:
         cards = run_all(LessonRuntime.build(e01, cet6_spec, Progress()))
         sent_ids = {s.id for s in e01.sentences}
         for c in cards:
-            if c.domain == "sentences" and c.kind in ("sentence", "i2a"):
+            if c.domain == "sentences" and c.is_quiz:
                 assert len(c.choices) == 4, f"{c.card_id}: {c.choices}"
                 assert set(c.choices) <= sent_ids
                 assert c.correct_id in c.choices
@@ -242,7 +233,7 @@ class TestChoicePool:
     def test_正确答案在每个选项里只出现一次(self, e01, cet6_spec):
         cards = run_all(LessonRuntime.build(e01, cet6_spec, Progress()))
         for c in cards:
-            if c.needs_answer and c.kind != "shadow":
+            if c.needs_answer and c.is_quiz:
                 assert c.choices.count(c.correct_id) == 1, c.card_id
 
 
@@ -258,4 +249,4 @@ class TestBonus:
         for pid in ("bath", "lets", "s03"):
             hits = [c for c in cards if c.item_id == pid]
             assert len(hits) == 1, f"{pid}: {len(hits)}"
-            assert hits[0].kind != "shadow"
+            assert hits[0].tool != "shadow"

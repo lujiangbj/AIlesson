@@ -7,12 +7,14 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(tmp_path, monkeypatch, mvp_root):
-    """把 DATA 指到 tmp，避免污染真实进度。"""
-    import ailesson.server.app as srv
+    """把数据目录指到 tmp，避免污染真实进度。"""
+    import ailesson.server.deps as deps
+    import ailesson.server.state as state
+    from ailesson.server.app import app
 
-    monkeypatch.setattr(srv, "DATA", tmp_path)
-    monkeypatch.setattr(srv, "MVP_ROOT", mvp_root)
-    monkeypatch.setattr(srv, "store", None)          # 重置单例
+    monkeypatch.setattr(state, "DATA", tmp_path)
+    monkeypatch.setattr(state, "MVP_ROOT", mvp_root)
+    deps.reset_state()
 
     # 不让测试真的建 LLM 客户端（要读凭证）
     class DummyLLM:
@@ -22,8 +24,9 @@ def client(tmp_path, monkeypatch, mvp_root):
         def complete_json(self, *a, **k):
             raise RuntimeError("测试不该调 LLM")
 
-    monkeypatch.setattr(srv, "LLMClient", lambda *a, **k: DummyLLM())
-    return TestClient(srv.app)
+    monkeypatch.setattr(state, "LLMClient", lambda *a, **k: DummyLLM())
+    yield TestClient(app)
+    deps.reset_state()
 
 
 class TestCrud:
@@ -98,7 +101,7 @@ class TestIsolation:
 
     def _seed(self, client, tmp_path, uid, lessons):
         """直接写 state 文件，模拟这个用户已经学了几节。"""
-        import ailesson.server.app as srv
+        import ailesson.server.deps as srv
         p = srv.S().users.state_path(uid)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps({
@@ -151,7 +154,7 @@ class TestIsolation:
 
     def test_LLM缓存全局共享(self, client, tmp_path):
         """缓存不该跟着用户走，否则白烧钱。"""
-        import ailesson.server.app as srv
+        import ailesson.server.deps as srv
         client.post("/api/users", json={"name": "A"})
         assert srv.S().cache.root == tmp_path / "cache"
 
@@ -165,7 +168,7 @@ class TestHistory:
         assert client.get("/api/users/nope/history").status_code == 404
 
     def test_记录可读回(self, client):
-        import ailesson.server.app as srv
+        import ailesson.server.deps as srv
         uid = client.post("/api/users", json={"name": "A"}).json()["users"][0]["id"]
         srv.S().users.append_history(uid, {"lesson_index": 1, "accuracy": 0.9})
         h = client.get(f"/api/users/{uid}/history").json()["history"]
@@ -175,14 +178,16 @@ class TestHistory:
 
 class TestMigration:
     def test_旧state自动迁移(self, tmp_path, monkeypatch, mvp_root):
-        import ailesson.server.app as srv
+        import ailesson.server.deps as deps
+        import ailesson.server.state as state
         (tmp_path / "state.json").write_text(
             json.dumps({"episode_id": "peppa-s01e01", "completed_lessons": [1, 2]}))
-        monkeypatch.setattr(srv, "DATA", tmp_path)
-        monkeypatch.setattr(srv, "MVP_ROOT", mvp_root)
-        monkeypatch.setattr(srv, "store", None)
-        monkeypatch.setattr(srv, "LLMClient", lambda *a, **k: object())
-        c = TestClient(srv.app)
+        monkeypatch.setattr(state, "DATA", tmp_path)
+        monkeypatch.setattr(state, "MVP_ROOT", mvp_root)
+        monkeypatch.setattr(state, "LLMClient", lambda *a, **k: object())
+        deps.reset_state()
+        from ailesson.server.app import app
+        c = TestClient(app)
         r = c.get("/api/users").json()
         assert len(r["users"]) == 1
         assert c.get("/api/status").json()["completed_lessons"] == [1, 2]

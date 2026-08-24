@@ -7,6 +7,7 @@ from typing import Any
 
 from ailesson.course.assessment import SelfAssessment, build_assessment
 from ailesson.contract.episode import Episode
+from ailesson.classroom.arrangement import DEFAULT, Arrangement
 from ailesson.classroom.runtime import LessonRuntime
 from ailesson.infra.llm import BaseLLM
 from ailesson.contract.lesson_spec import CoursePlan, LessonSpec
@@ -20,6 +21,8 @@ class CourseSession:
     episode: Episode
     llm: BaseLLM
     progress: Progress = field(default_factory=Progress)
+    # 用哪套编排上课。改编排 = 换教材，快照会记下 id + 版本
+    arrangement: Arrangement = DEFAULT
     assessment: SelfAssessment | None = None
     plan: CoursePlan | None = None
     completed_lessons: list[int] = field(default_factory=list)
@@ -77,7 +80,8 @@ class CourseSession:
         if spec is None:
             return None
         return LessonRuntime.build(
-            self.episode, spec, self.progress, known=self._spot_check(spec)
+            self.episode, spec, self.progress, known=self._spot_check(spec),
+            arrangement=self.arrangement,
         )
 
     def label_of(self, domain: str, item_id: str) -> str:
@@ -140,10 +144,11 @@ class CourseSession:
 
     @classmethod
     def restore(
-        cls, ep: Episode, llm: BaseLLM, snap: dict[str, Any]
+        cls, ep: Episode, llm: BaseLLM, snap: dict[str, Any],
+        arrangement: Arrangement = DEFAULT,
     ) -> tuple[CourseSession, LessonRuntime | None]:
         s = cls(
-            episode=ep, llm=llm,
+            episode=ep, llm=llm, arrangement=arrangement,
             progress=Progress.from_dict({"progress": snap.get("progress", {})}),
             assessment=(
                 SelfAssessment.from_dict(snap["assessment"])
@@ -160,6 +165,7 @@ class CourseSession:
             spec = s.spec_for(lsnap.get("lesson_index", 0))
             if spec:
                 rt = LessonRuntime.restore(
-                    ep, spec, s.progress, lsnap, known=s._spot_check(spec)
+                    ep, spec, s.progress, lsnap, known=s._spot_check(spec),
+                    arrangement=arrangement,
                 )
         return s, rt
