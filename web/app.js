@@ -489,16 +489,13 @@ async function repack() {
   }
 }
 
-const KIND_HINT = {
-  a2i: '听音选图', i2a: '看图选音', shadow: '跟读',
-  chunk: '听短语选义', sentence: '听原声选义',
-};
-
-// 卡型渲染注册表：教室框架（顶栏 / 进度条 / Stage / Dock）恒定，
-// 加新卡型 = 在这里注册一个返回 { stage, dock } 的渲染器，shell 不用动。
+// 渲染注册表：按**交互形态**分派，不按教具。教室框架（顶栏 / 进度条 /
+// Stage / Dock）恒定，加一件教具只要它复用已有形态就不用动前端；
+// 只有新增形态才需要在这里注册。
+// 教具名和操作提示由后端教具表给（c.tool_name / c.step.hint），前端不再自己拼。
 const CARDS = {
-  a2i: cardQuiz, i2a: cardQuiz, chunk: cardQuiz, sentence: cardQuiz,
-  shadow: cardShadow, passive: cardPassive, assess: cardAssess, report: cardReport,
+  quiz: cardQuiz, shadow: cardShadow, passive: cardPassive,
+  assess: cardAssess, report: cardReport,
 };
 
 function lessonTitle() {
@@ -513,7 +510,7 @@ function lessonTitle() {
 function clsTop(c) {
   const idx = S.lessonIndex;
   const stats = c.stats || { correct: 0, wrong: 0 };
-  const seg = c.segment || { index: 16, title: '收尾报告', minutes: 1 };
+  const seg = c.step || { index: 16, title: '收尾报告', minutes: 1 };
   return h('header', { class: 'cls-top' }, [
     h('button', {
       class: 'exit-btn', title: '保存进度并退出课堂',
@@ -615,7 +612,7 @@ function finishedParts() {
 function viewCard() {
   const c = S.card;
   if (!c) return h('div', { class: 'card' }, ['加载中…']);
-  const parts = c.finished ? finishedParts() : (CARDS[c.kind] || cardQuiz)(c);
+  const parts = c.finished ? finishedParts() : (CARDS[c.interaction] || cardQuiz)(c);
   return lessonShell(c, parts);
 }
 
@@ -624,7 +621,7 @@ function promptCard(c, isI2A, answered) {
   // i2a 的图是题干本身；短语/句子的图是场景教具，不是答案。
   const showImage = c.image && (isI2A || answered || c.domain !== 'words');
   return h('section', { class: 'panel prompt-panel' }, [
-    h('div', { class: 'panel-tag' }, [KIND_HINT[c.kind] || c.kind]),
+    h('div', { class: 'panel-tag' }, [c.tool_name || c.tool]),
     c.is_bonus ? h('div', { class: 'bonus-chip' }, ['顺带点']) : null,
     showImage
       ? h('div', { class: 'panel-media' }, [h('img', { src: c.image, alt: '' })])
@@ -649,15 +646,9 @@ function promptCard(c, isI2A, answered) {
   ]);
 }
 
-function answerHint(c) {
-  if (c.kind === 'i2a') return '先点 🔊 试听选项，再点选项作答';
-  if (c.domain !== 'words') return '听声音，选出对应的中文释义';
-  return '听声音，选出对应的图片';
-}
-
 function cardQuiz(c) {
   const answered = S.picked !== null;
-  const isI2A = c.kind === 'i2a';
+  const isI2A = c.direction === 'i2a';
   const long = c.domain !== 'words';   // 短语句子的选项用文字列表
 
   // 选项：词用图片格；短语句子用文字行（图片区分度不够）
@@ -711,7 +702,7 @@ function cardQuiz(c) {
       ]),
     ]),
     // 答对也要显示词义：可能是蒙对的，不确认一遍等于没学到
-    dock: answered ? dockFeedback(label) : dockHint(answerHint(c)),
+    dock: answered ? dockFeedback(label) : dockHint((c.step && c.step.hint) || ''),
   };
 }
 
@@ -950,7 +941,7 @@ function resetCardState() {
 function autoPlay() {
   const c = S.card;
   if (!c || c.finished) return;
-  if (['a2i', 'chunk', 'sentence'].includes(c.kind)) {
+  if (c.interaction === 'quiz' && c.direction === 'a2i') {
     setTimeout(() => play(c.prompt_audio), 250);
     // 卡住才帮忙收窄。8 秒对成人学习者太急（听两遍原声就超了），给到 20 秒。
     S.stuckTimer = setTimeout(() => {

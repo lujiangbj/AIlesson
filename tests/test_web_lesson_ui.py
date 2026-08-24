@@ -26,9 +26,9 @@ class TestLandscapeLessonShell:
         assert "rotate-guard" in JS or "rotate-guard" in HTML
 
     def test_教室框架与内容分离(self):
-        # 卡型渲染走注册表：加新卡型 = 注册一条，shell（顶栏/进度/dock）不动
+        # 渲染注册表按**交互形态**分派：加一件复用已有形态的教具不用动前端
         assert "const CARDS = {" in JS
-        assert "CARDS[c.kind]" in JS
+        assert "CARDS[c.interaction]" in JS
         # 框架三区恒定：顶栏 / 进度条 / 底部 dock（反馈与主行动按钮的家）
         assert "cls-top" in JS and "cls-progress" in JS and "cls-dock" in JS
         assert ".cls-dock" in HTML
@@ -47,7 +47,7 @@ class TestLandscapeLessonShell:
         # /api/lesson/current 在结束态只返回 {"finished": true}，
         # 没有 stats/segment/total；顶栏和进度轨必须能容忍。
         assert "c.stats || { correct: 0" in JS
-        assert "c.segment || { index: 16" in JS
+        assert "c.step || { index: 16" in JS
         assert "c.total || cursor + 1" in JS
 
     def test_进度条容忍缺失total(self):
@@ -76,7 +76,8 @@ class TestCardInteraction:
         assert "class: 'opt-play'" in JS
         assert "stopPropagation" in JS
         assert ".opt-play" in HTML
-        assert "先点 🔊 试听选项，再点选项作答" in JS
+        # 操作提示由后端教具表给（contract/tools.py 的 hint），前端只渲染
+        assert "c.step && c.step.hint" in JS
 
     def test_i2a点选项不再自动播放(self):
         assert "if (isI2A && !answered) play(ch.audio)" not in JS

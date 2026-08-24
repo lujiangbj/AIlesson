@@ -36,6 +36,16 @@ class TestRegistry:
             else:
                 assert not t.scored, f"{t.id} 不是答题却计分"
 
+    def test_答题类和跟读类要有操作提示(self):
+        """提示由教具声明，前端不再自己拼 —— 原先散在 answerHint() 的分支里。"""
+        for t in TOOLS.values():
+            if t.interaction in ("quiz", "shadow", "passive", "assess"):
+                assert t.hint, f"{t.id} 缺操作提示"
+
+    def test_反向教具提示要说清先试听(self):
+        # 实测 bug：i2a 点选项立即作答，学生只听到自己选的那个
+        assert "试听" in tool("recall_pick_audio").hint
+
     def test_答题类教具都要声明方向(self):
         for t in TOOLS.values():
             if t.interaction == "quiz":
