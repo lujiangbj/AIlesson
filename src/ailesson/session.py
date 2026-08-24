@@ -5,22 +5,23 @@ from dataclasses import dataclass, field
 from math import ceil
 from typing import Any
 
-from .assessment import SelfAssessment, build_assessment
-from .episode import Episode
-from .lesson3 import LessonRuntime3
-from .llm import BaseLLM
-from .packer3 import TARGET_POINTS, CoursePlan3, LessonSpec3, pack_course3
-from .progress import Progress
-from .report import LessonReport, build_report
+from ailesson.course.assessment import SelfAssessment, build_assessment
+from ailesson.contract.episode import Episode
+from ailesson.classroom.runtime import LessonRuntime
+from ailesson.infra.llm import BaseLLM
+from ailesson.contract.lesson_spec import CoursePlan, LessonSpec
+from ailesson.course.planner import TARGET_POINTS, pack_course
+from ailesson.learner.progress import Progress
+from ailesson.classroom.report import LessonReport, build_report
 
 
 @dataclass
-class CourseSession3:
+class CourseSession:
     episode: Episode
     llm: BaseLLM
     progress: Progress = field(default_factory=Progress)
     assessment: SelfAssessment | None = None
-    plan: CoursePlan3 | None = None
+    plan: CoursePlan | None = None
     completed_lessons: list[int] = field(default_factory=list)
     # 动态挑出的 chunk/句子及打分理由（selector.build_pool 的结果）。
     # 只用于展示和调参，真正的待学池仍在 assessment 里
@@ -50,12 +51,12 @@ class CourseSession3:
 
     # ---- 上课 ----
 
-    def spec_for(self, index: int) -> LessonSpec3 | None:
+    def spec_for(self, index: int) -> LessonSpec | None:
         if not self.plan:
             return None
         return next((l for l in self.plan.lessons if l.index == index), None)
 
-    def _spot_check(self, spec: LessonSpec3) -> dict[str, list[str]]:
+    def _spot_check(self, spec: LessonSpec) -> dict[str, list[str]]:
         """挑本节要抽检的已会条目：优先和本节相关的。"""
         if not self.assessment:
             return {}
@@ -71,11 +72,11 @@ class CourseSession3:
         out["chunks"] = a.known_chunks[:3]
         return out
 
-    def start_lesson(self, index: int) -> LessonRuntime3 | None:
+    def start_lesson(self, index: int) -> LessonRuntime | None:
         spec = self.spec_for(index)
         if spec is None:
             return None
-        return LessonRuntime3.build(
+        return LessonRuntime.build(
             self.episode, spec, self.progress, known=self._spot_check(spec)
         )
 
@@ -94,7 +95,7 @@ class CourseSession3:
         except KeyError:
             return item_id
 
-    def finish_lesson(self, rt: LessonRuntime3) -> LessonReport:
+    def finish_lesson(self, rt: LessonRuntime) -> LessonReport:
         if self.assessment:
             for dom, item_id in rt.demoted:
                 self.assessment.demote(dom, item_id)   # type: ignore[arg-type]
@@ -121,7 +122,7 @@ class CourseSession3:
 
     # ---- 落盘 ----
 
-    def to_dict(self, lesson_runtime: LessonRuntime3 | None = None) -> dict[str, Any]:
+    def to_dict(self, lesson_runtime: LessonRuntime | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {
             "episode_id": self.episode.id,
             "progress": self.progress.to_dict()["progress"],
@@ -140,7 +141,7 @@ class CourseSession3:
     @classmethod
     def restore(
         cls, ep: Episode, llm: BaseLLM, snap: dict[str, Any]
-    ) -> tuple[CourseSession3, LessonRuntime3 | None]:
+    ) -> tuple[CourseSession, LessonRuntime | None]:
         s = cls(
             episode=ep, llm=llm,
             progress=Progress.from_dict({"progress": snap.get("progress", {})}),
@@ -148,7 +149,7 @@ class CourseSession3:
                 SelfAssessment.from_dict(snap["assessment"])
                 if snap.get("assessment") else None
             ),
-            plan=CoursePlan3.from_dict(snap["plan"]) if snap.get("plan") else None,
+            plan=CoursePlan.from_dict(snap["plan"]) if snap.get("plan") else None,
             completed_lessons=list(snap.get("completed_lessons", [])),
             selection=dict(snap.get("selection") or {}),
             probe=dict(snap.get("probe") or {}),
@@ -158,7 +159,7 @@ class CourseSession3:
         if lsnap:
             spec = s.spec_for(lsnap.get("lesson_index", 0))
             if spec:
-                rt = LessonRuntime3.restore(
+                rt = LessonRuntime.restore(
                     ep, spec, s.progress, lsnap, known=s._spot_check(spec)
                 )
         return s, rt

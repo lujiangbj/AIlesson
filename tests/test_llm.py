@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from ailesson.llm import FakeLLM, LLMClient, LLMError
+from ailesson.infra.llm import FakeLLM, LLMClient, LLMError
 
 
 class TestFakeLLM:

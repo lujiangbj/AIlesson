@@ -15,8 +15,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .episode import Episode
-from .llm import BaseLLM, LLMError
+from ailesson.contract.episode import Episode
+from ailesson.infra.llm import BaseLLM, LLMError
 
 GROUP_TARGET = 8          # 每组词数目标，一屏能扫完
 

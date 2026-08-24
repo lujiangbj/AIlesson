@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from .llm import BaseLLM, LLMError
+from ailesson.infra.llm import BaseLLM, LLMError
 
 # 判定结果
 GOOD = "good"          # 单图能教，无歧义

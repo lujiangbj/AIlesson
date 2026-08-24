@@ -4,7 +4,7 @@
 """
 import json
 
-from ailesson.progress import MASTERY_STREAK, Progress
+from ailesson.learner.progress import MASTERY_STREAK, Progress
 
 
 class TestRecord:

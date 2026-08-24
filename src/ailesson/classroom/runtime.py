@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from .cards import Card, _choices_for_word
-from .episode import Episode
-from .packer3 import LessonSpec3
-from .progress import Progress
+from ailesson.classroom.cards import Card, _choices_for_word
+from ailesson.contract.episode import Episode
+from ailesson.contract.lesson_spec import LessonSpec
+from ailesson.learner.progress import Progress
 
 MAX_REVIEW = 9          # 复习点上限（三层合计）
 MAX_SPOT_CHECK = 3
@@ -40,7 +40,7 @@ def _fill_choices(all_ids: list[str], cid: str, pool: list[str]) -> tuple[str, .
     return tuple(out[:4])
 
 
-class Seg3(Enum):
+class StepKind(Enum):
     REVIEW = "review"
     SPOT_CHECK = "spot_check"
     WORD_A2I = "word_a2i"
@@ -60,39 +60,39 @@ class Seg3(Enum):
 
 
 @dataclass(frozen=True)
-class Segment3:
+class Step:
     index: int
-    kind: Seg3
+    kind: StepKind
     title: str
     minutes: float
 
 
-SEGMENTS3: tuple[Segment3, ...] = (
-    Segment3(1, Seg3.REVIEW, "开场 + 复习", 3.0),
-    Segment3(2, Seg3.SPOT_CHECK, "抽检", 1.0),
-    Segment3(3, Seg3.WORD_A2I, "生词首触", 2.0),
-    Segment3(4, Seg3.WORD_I2A, "生词反向", 1.5),
-    Segment3(5, Seg3.WORD_SHADOW, "生词跟读", 1.5),
-    Segment3(6, Seg3.CHUNK_A2I, "短语听辨", 3.0),
-    Segment3(7, Seg3.CHUNK_I2A, "短语反向", 2.0),
-    Segment3(8, Seg3.CHUNK_SHADOW, "短语跟读", 2.5),
-    Segment3(9, Seg3.INTERLUDE, "中场", 1.0),
-    Segment3(10, Seg3.SENTENCE_A2I, "句子原声", 3.5),
-    Segment3(11, Seg3.SENTENCE_I2A, "句子反向", 2.0),
-    Segment3(12, Seg3.SENTENCE_SHADOW, "句子跟读", 3.0),
-    Segment3(13, Seg3.MIXED, "混打", 2.0),
-    Segment3(14, Seg3.REDO, "错题重做", 1.5),
-    Segment3(15, Seg3.BLIND_LISTEN, "场景盲听", 1.5),
-    Segment3(16, Seg3.REPORT, "收尾报告", 1.0),
+SEGMENTS: tuple[Step, ...] = (
+    Step(1, StepKind.REVIEW, "开场 + 复习", 3.0),
+    Step(2, StepKind.SPOT_CHECK, "抽检", 1.0),
+    Step(3, StepKind.WORD_A2I, "生词首触", 2.0),
+    Step(4, StepKind.WORD_I2A, "生词反向", 1.5),
+    Step(5, StepKind.WORD_SHADOW, "生词跟读", 1.5),
+    Step(6, StepKind.CHUNK_A2I, "短语听辨", 3.0),
+    Step(7, StepKind.CHUNK_I2A, "短语反向", 2.0),
+    Step(8, StepKind.CHUNK_SHADOW, "短语跟读", 2.5),
+    Step(9, StepKind.INTERLUDE, "中场", 1.0),
+    Step(10, StepKind.SENTENCE_A2I, "句子原声", 3.5),
+    Step(11, StepKind.SENTENCE_I2A, "句子反向", 2.0),
+    Step(12, StepKind.SENTENCE_SHADOW, "句子跟读", 3.0),
+    Step(13, StepKind.MIXED, "混打", 2.0),
+    Step(14, StepKind.REDO, "错题重做", 1.5),
+    Step(15, StepKind.BLIND_LISTEN, "场景盲听", 1.5),
+    Step(16, StepKind.REPORT, "收尾报告", 1.0),
 )
-SEG3_BY_INDEX = {s.index: s for s in SEGMENTS3}
+SEG_BY_INDEX = {s.index: s for s in SEGMENTS}
 
 # 计 streak 的环节：首触和反向。跟读练产出、混打重做是巩固，都不计。
 STREAK_SEGMENTS = {1, 2, 3, 4, 6, 7, 10, 11}
 
 
 @dataclass
-class LessonRuntime3:
+class LessonRuntime:
     episode_id: str
     lesson_index: int
     cards: list[Card]
@@ -115,12 +115,12 @@ class LessonRuntime3:
 
     @classmethod
     def build(
-        cls, ep: Episode, spec: LessonSpec3, progress: Progress,
+        cls, ep: Episode, spec: LessonSpec, progress: Progress,
         known: dict[str, list[str]] | None = None,
         review: dict[str, list[str]] | None = None,
         dirs: dict[str, str] | None = None,
-    ) -> LessonRuntime3:
-        cards, proto, picked = _build_cards3(
+    ) -> LessonRuntime:
+        cards, proto, picked = _build_cards(
             ep, spec, progress, known or {}, review, dirs
         )
         return cls(
@@ -132,9 +132,9 @@ class LessonRuntime3:
 
     @classmethod
     def restore(
-        cls, ep: Episode, spec: LessonSpec3, progress: Progress,
+        cls, ep: Episode, spec: LessonSpec, progress: Progress,
         snap: dict[str, Any], known: dict[str, list[str]] | None = None,
-    ) -> LessonRuntime3:
+    ) -> LessonRuntime:
         # 复习/抽检的选择必须从快照读回，不能重新挑：pick_review 的排序依赖
         # last_at 和 streak，上课过程中它们已经变了，重挑会得到不同的卡序 →
         # 续上时错位到别的卡。
@@ -265,8 +265,8 @@ class LessonRuntime3:
         self.cards[at:at] = new
 
 
-def _build_cards3(
-    ep: Episode, spec: LessonSpec3, progress: Progress,
+def _build_cards(
+    ep: Episode, spec: LessonSpec, progress: Progress,
     known: dict[str, list[str]], review_in: dict[str, list[str]] | None = None,
     dirs_in: dict[str, str] | None = None,
 ) -> tuple[list[Card], dict[str, Card], dict[str, Any]]:
@@ -443,4 +443,4 @@ def _build_cards3(
     return cards, proto, {"review": review, "spot": spot, "dirs": dirs}
 
 
-__all__ = ["SEGMENTS3", "SEG3_BY_INDEX", "LessonRuntime3", "Segment3", "Seg3"]
+__all__ = ["SEGMENTS", "SEG_BY_INDEX", "LessonRuntime", "Step", "StepKind"]

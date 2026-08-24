@@ -7,16 +7,16 @@ import json
 
 import pytest
 
-from ailesson.assessment import SelfAssessment, build_assessment
-from ailesson.episode import load_episode
-from ailesson.llm import FakeLLM
-from ailesson.packer3 import (
+from ailesson.course.assessment import SelfAssessment, build_assessment
+from ailesson.contract.episode import load_episode
+from ailesson.infra.llm import FakeLLM
+from ailesson.course.planner import (
     BATCH_POINTS,
     MAX_POINTS,
     MIN_POINTS,
     _split_assessment,
-    pack_course3,
-    validate_plan3,
+    pack_course,
+    validate_plan,
 )
 
 
@@ -60,12 +60,12 @@ class TestValidate:
             "chunks": ["im_peppa", "daddy_daddy"],
             "sentences": [],
         })
-        assert validate_plan3(e01, CET6_LESSONS, a) == []
+        assert validate_plan(e01, CET6_LESSONS, a) == []
 
     def test_教学点过少不合格(self, e01, all_items):
         a = build_assessment(e01.id, all_items, {})
         bad = [{"theme": "太少", "words": ["puddle"], "chunks": [], "sentences": []}]
-        errs = validate_plan3(e01, bad, a)
+        errs = validate_plan(e01, bad, a)
         assert any("教学点" in e for e in errs)
 
     def test_教学点过多不合格(self, e01, all_items):
@@ -76,7 +76,7 @@ class TestValidate:
             "chunks": all_items["chunks"][:8],
             "sentences": all_items["sentences"][:8],
         }]
-        errs = validate_plan3(e01, bad, a)
+        errs = validate_plan(e01, bad, a)
         assert any("教学点" in e for e in errs)
 
     def test_引用不在不会池的条目不合格(self, e01, all_items):
@@ -84,20 +84,20 @@ class TestValidate:
         a = build_assessment(e01.id, all_items, {"chunks": ["muddy_puddles"]})
         bad = [{"theme": "x", "words": ["puddle", "muddy", "mud"],
                 "chunks": ["muddy_puddles"], "sentences": ["s07", "s08"]}]
-        errs = validate_plan3(e01, bad, a)
+        errs = validate_plan(e01, bad, a)
         assert any("muddy_puddles" in e for e in errs)
 
     def test_跨节重复不合格(self, e01, all_items):
         a = build_assessment(e01.id, all_items, {})
         dup = [dict(CET6_LESSONS[0]), dict(CET6_LESSONS[0])]
-        errs = validate_plan3(e01, dup, a)
+        errs = validate_plan(e01, dup, a)
         assert any("重复" in e for e in errs)
 
     def test_不存在的id不合格(self, e01, all_items):
         a = build_assessment(e01.id, all_items, {})
         bad = [{"theme": "x", "words": ["puddle", "muddy"],
                 "chunks": ["no_such_chunk"], "sentences": ["s07", "s99"]}]
-        errs = validate_plan3(e01, bad, a)
+        errs = validate_plan(e01, bad, a)
         assert any("no_such_chunk" in e for e in errs)
         assert any("s99" in e for e in errs)
 
@@ -107,7 +107,7 @@ class TestValidate:
         ok = [{"theme": "认识大家",
                "words": ["peppa", "pig", "george", "little", "brother", "rain"],
                "chunks": [], "sentences": []}]
-        assert validate_plan3(e01, ok, a) == []
+        assert validate_plan(e01, ok, a) == []
 
 
 class TestCET6Flow:
@@ -121,7 +121,7 @@ class TestCET6Flow:
             "chunks": ["im_peppa", "daddy_daddy"],
             "sentences": [],
         })
-        return a, pack_course3(e01, a, FakeLLM([reply(CET6_LESSONS)]))
+        return a, pack_course(e01, a, FakeLLM([reply(CET6_LESSONS)]))
 
     def test_出多节课而不是一节(self, packed):
         """原来只按词算，5 个生词 → 1 节。现在算短语句子 → 多节。"""
@@ -163,13 +163,13 @@ class TestZeroBaseFlow:
         # 97 个教学点 / 每节 8 个 ≈ 12 节
         assert a.total_unknown() == 97
         llm = FakeLLM([])       # 走规则兜底，只验节数和覆盖
-        plan = pack_course3(e01, a, llm)
+        plan = pack_course(e01, a, llm)
         assert plan.fallback is True
         assert 8 <= len(plan.lessons) <= 20
 
     def test_兜底也不丢条目(self, e01, all_items):
         a = build_assessment(e01.id, all_items, {})
-        plan = pack_course3(e01, a, FakeLLM([]))
+        plan = pack_course(e01, a, FakeLLM([]))
         got_w = {w for l in plan.lessons for w in l.focus_words + l.bonus_words}
         got_c = {c for l in plan.lessons for c in l.chunk_ids + l.bonus_chunks}
         got_s = {s for l in plan.lessons for s in l.sentence_ids + l.bonus_sentences}
@@ -190,7 +190,7 @@ class TestBatching:
         a = build_assessment(e01.id, all_items, {})
         assert a.total_unknown() < BATCH_POINTS
         llm = FakeLLM([reply(CET6_LESSONS)])
-        pack_course3(e01, a, llm)
+        pack_course(e01, a, llm)
         assert len(llm.calls) == 1
 
     def test_切分保留全部教学点(self, e01, all_items):
@@ -228,7 +228,7 @@ class TestBatching:
                      "sentences": list(a.unknown_sentences)},
             how=a.how, at=a.at)
         assert big.total_unknown() > BATCH_POINTS
-        plan = pack_course3(e01, big, FakeLLM(["坏"] * 30))
+        plan = pack_course(e01, big, FakeLLM(["坏"] * 30))
         idx = [l.index for l in plan.lessons]
         assert idx == list(range(1, len(idx) + 1))
 
@@ -239,7 +239,7 @@ class TestBatching:
             unknown={"words": a.unknown_words * 5, "chunks": [],
                      "sentences": []},
             how=a.how, at=a.at)
-        plan = pack_course3(e01, big, FakeLLM(["坏"] * 30))
+        plan = pack_course(e01, big, FakeLLM(["坏"] * 30))
         assert plan.fallback
 
 
@@ -248,7 +248,7 @@ class TestRetry:
         a = build_assessment(e01.id, all_items, {})
         bad = [{"theme": "太少", "words": ["puddle"], "chunks": [], "sentences": []}]
         llm = FakeLLM([reply(bad), reply(CET6_LESSONS)])
-        pack_course3(e01, a, llm)
+        pack_course(e01, a, llm)
         assert len(llm.calls) == 2
         assert "教学点" in llm.calls[1]["prompt"]
 
@@ -257,7 +257,7 @@ class TestRetry:
             "words": ["peppa"], "chunks": ["im_peppa"], "sentences": [],
         })
         llm = FakeLLM([reply(CET6_LESSONS)])
-        pack_course3(e01, a, llm)
+        pack_course(e01, a, llm)
         p = llm.calls[0]["prompt"]
         assert "muddy_puddles" in p        # 短语清单
         assert "s07" in p                   # 句子清单
@@ -271,12 +271,12 @@ class TestRetry:
 
 class TestPersistence:
     def test_往返(self, e01, all_items):
-        from ailesson.packer3 import CoursePlan3
+        from ailesson.contract.lesson_spec import CoursePlan
         a = build_assessment(e01.id, all_items, {
             "words": [w for w in all_items["words"]
                       if w not in ("puddle", "muddy", "mud", "boot", "goodness")],
             "chunks": ["im_peppa", "daddy_daddy"], "sentences": [],
         })
-        plan = pack_course3(e01, a, FakeLLM([reply(CET6_LESSONS)]))
-        back = CoursePlan3.from_dict(json.loads(json.dumps(plan.to_dict())))
+        plan = pack_course(e01, a, FakeLLM([reply(CET6_LESSONS)]))
+        back = CoursePlan.from_dict(json.loads(json.dumps(plan.to_dict())))
         assert back == plan

@@ -13,9 +13,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .assessment import SelfAssessment
-from .episode import Episode
-from .llm import BaseLLM, LLMError
+from ailesson.course.assessment import SelfAssessment
+from ailesson.contract.episode import Episode
+from ailesson.contract.lesson_spec import CoursePlan, LessonSpec
+from ailesson.infra.llm import BaseLLM, LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -32,83 +33,7 @@ MAX_TOKENS = 16384
 BATCH_POINTS = 120
 
 
-@dataclass
-class LessonSpec3:
-    """一节课的三层内容清单。"""
-
-    episode_id: str
-    index: int
-    theme: str
-    focus_words: list[str] = field(default_factory=list)
-    chunk_ids: list[str] = field(default_factory=list)
-    sentence_ids: list[str] = field(default_factory=list)
-    # 顺带过的（1 题、不跟读）
-    bonus_words: list[str] = field(default_factory=list)
-    bonus_chunks: list[str] = field(default_factory=list)
-    bonus_sentences: list[str] = field(default_factory=list)
-
-    @property
-    def lesson_id(self) -> str:
-        return f"{self.episode_id}-L{self.index}"
-
-    @property
-    def n_points(self) -> int:
-        return len(self.focus_words) + len(self.chunk_ids) + len(self.sentence_ids)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "episode_id": self.episode_id,
-            "index": self.index,
-            "theme": self.theme,
-            "focus_words": self.focus_words,
-            "chunk_ids": self.chunk_ids,
-            "sentence_ids": self.sentence_ids,
-            "bonus_words": self.bonus_words,
-            "bonus_chunks": self.bonus_chunks,
-            "bonus_sentences": self.bonus_sentences,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> LessonSpec3:
-        return cls(
-            episode_id=d["episode_id"],
-            index=d["index"],
-            theme=d.get("theme", ""),
-            focus_words=list(d.get("focus_words", [])),
-            chunk_ids=list(d.get("chunk_ids", [])),
-            sentence_ids=list(d.get("sentence_ids", [])),
-            bonus_words=list(d.get("bonus_words", [])),
-            bonus_chunks=list(d.get("bonus_chunks", [])),
-            bonus_sentences=list(d.get("bonus_sentences", [])),
-        )
-
-
-@dataclass
-class CoursePlan3:
-    episode_id: str
-    lessons: list[LessonSpec3]
-    at: int = 0
-    fallback: bool = False
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "episode_id": self.episode_id,
-            "lessons": [l.to_dict() for l in self.lessons],
-            "at": self.at,
-            "fallback": self.fallback,
-        }
-
-    @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> CoursePlan3:
-        return cls(
-            episode_id=d["episode_id"],
-            lessons=[LessonSpec3.from_dict(x) for x in d.get("lessons", [])],
-            at=d.get("at", 0),
-            fallback=bool(d.get("fallback", False)),
-        )
-
-
-def validate_plan3(
+def validate_plan(
     ep: Episode, lessons: list[dict[str, Any]], a: SelfAssessment
 ) -> list[str]:
     """校验划分。错误信息会喂回 LLM 做重试反馈，写具体些。"""
@@ -267,7 +192,7 @@ def _rule_based(ep: Episode, a: SelfAssessment) -> list[dict[str, Any]]:
 
 
 def _distribute_bonus(
-    ep: Episode, lessons: list[LessonSpec3], left: dict[str, list[str]]
+    ep: Episode, lessons: list[LessonSpec], left: dict[str, list[str]]
 ) -> None:
     """漏掉的条目摊进各节当顺带点。"""
     if not lessons:
@@ -318,29 +243,29 @@ def _split_assessment(a: SelfAssessment, size: int) -> list[SelfAssessment]:
     return out or [a]
 
 
-def pack_course3(
+def pack_course(
     ep: Episode, a: SelfAssessment, llm: BaseLLM, thinking: bool = True
-) -> CoursePlan3:
+) -> CoursePlan:
     """按教学点打包成 N 节课。
 
     待学池超过 BATCH_POINTS 时分批调 LLM，各批结果拼起来并重排 index。
     """
     if a.total_unknown() == 0:
-        return CoursePlan3(episode_id=ep.id, lessons=[], at=int(time.time()))
+        return CoursePlan(episode_id=ep.id, lessons=[], at=int(time.time()))
 
     if a.total_unknown() > BATCH_POINTS:
         batches = _split_assessment(a, BATCH_POINTS)
         if len(batches) > 1:
             logger.info("待学 %d 点，分 %d 批打包", a.total_unknown(), len(batches))
-            merged: list[LessonSpec3] = []
+            merged: list[LessonSpec] = []
             any_fb = False
             for part in batches:
-                sub = pack_course3(ep, part, llm, thinking=thinking)
+                sub = pack_course(ep, part, llm, thinking=thinking)
                 any_fb = any_fb or sub.fallback
                 merged.extend(sub.lessons)
             for i, l in enumerate(merged, 1):
                 l.index = i
-            return CoursePlan3(episode_id=ep.id, lessons=merged,
+            return CoursePlan(episode_id=ep.id, lessons=merged,
                                at=int(time.time()), fallback=any_fb)
 
     raw: list[dict[str, Any]] | None = None
@@ -367,7 +292,7 @@ def pack_course3(
             feedback = "输出格式不对，lessons 必须是非空数组"
             fallback_reason = "LLM 输出不是非空数组"
             continue
-        errs = validate_plan3(ep, got, a)
+        errs = validate_plan(ep, got, a)
         if not errs:
             raw = got
             break
@@ -386,7 +311,7 @@ def pack_course3(
         "sentences": set(a.unknown_sentences),
     }
     seen: dict[str, set[str]] = {k: set() for k in pools}
-    lessons: list[LessonSpec3] = []
+    lessons: list[LessonSpec] = []
 
     for l in raw:
         picked: dict[str, list[str]] = {}
@@ -403,7 +328,7 @@ def pack_course3(
         if not sum(len(v) for v in picked.values()):
             continue
         lessons.append(
-            LessonSpec3(
+            LessonSpec(
                 episode_id=ep.id,
                 index=len(lessons) + 1,
                 theme=str(l.get("theme") or f"第{len(lessons) + 1}组"),
@@ -416,6 +341,6 @@ def pack_course3(
     _distribute_bonus(ep, lessons, {
         dom: [x for x in pools[dom] if x not in seen[dom]] for dom in pools
     })
-    return CoursePlan3(
+    return CoursePlan(
         episode_id=ep.id, lessons=lessons, at=int(time.time()), fallback=fallback
     )

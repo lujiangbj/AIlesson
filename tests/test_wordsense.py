@@ -5,7 +5,7 @@
 """
 import pytest
 
-from ailesson.wordsense import (
+from ailesson.content.wordsense import (
     base_lemma,
     clip_around,
     collect_senses,

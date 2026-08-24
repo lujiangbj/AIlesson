@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from ailesson.friends_lesson import build_lesson, coverage_report  # noqa: E402
+from ailesson.content.friends_lesson import build_lesson, coverage_report  # noqa: E402
 
 ASSETS = ROOT / "data" / "friends" / "assets"
 VOCAB = ROOT / "data" / "friends" / "vocab"

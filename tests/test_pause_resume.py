@@ -5,11 +5,11 @@ runtime 快照本来就随 save() 落盘，缺的只是一个"离开但不丢进
 """
 import pytest
 
-from ailesson.assessment import build_assessment
-from ailesson.course3 import CourseSession3
-from ailesson.episode import load_episode
-from ailesson.llm import FakeLLM
-from ailesson.packer3 import CoursePlan3, LessonSpec3
+from ailesson.course.assessment import build_assessment
+from ailesson.session import CourseSession
+from ailesson.contract.episode import load_episode
+from ailesson.infra.llm import FakeLLM
+from ailesson.contract.lesson_spec import CoursePlan, LessonSpec
 
 
 @pytest.fixture(scope="module")
@@ -20,14 +20,14 @@ def e01(mvp_root):
 @pytest.fixture
 def session(e01):
     """造一个已打包、可开课的会话。"""
-    s = CourseSession3(episode=e01, llm=FakeLLM([]))
+    s = CourseSession(episode=e01, llm=FakeLLM([]))
     items = {
         "words": [w.lemma for w in e01.words],
         "chunks": [c.id for c in e01.chunks],
         "sentences": [s2.id for s2 in e01.sentences],
     }
     s.assessment = build_assessment(e01.id, items, {})
-    s.plan = CoursePlan3(episode_id=e01.id, lessons=[LessonSpec3(
+    s.plan = CoursePlan(episode_id=e01.id, lessons=[LessonSpec(
         episode_id=e01.id, index=1, theme="测试节",
         focus_words=[w.lemma for w in e01.words[:6]],
         chunk_ids=[c.id for c in e01.chunks[:2]],
@@ -44,14 +44,14 @@ class TestSnapshotRoundTrip:
         cursor, total = rt.cursor, len(rt.cards)
 
         snap = session.to_dict(lesson_runtime=rt)
-        s2, rt2 = CourseSession3.restore(e01, FakeLLM([]), snap)
+        s2, rt2 = CourseSession.restore(e01, FakeLLM([]), snap)
         assert rt2 is not None, "快照里有 lesson，应该恢复出 runtime"
         assert rt2.cursor == cursor
         assert len(rt2.cards) == total
 
     def test_不带_runtime_的快照恢复后无进行中课(self, e01, session):
         session.start_lesson(1)
-        s2, rt2 = CourseSession3.restore(
+        s2, rt2 = CourseSession.restore(
             e01, FakeLLM([]), session.to_dict())     # 刻意不传 runtime
         assert rt2 is None
         assert s2.plan is not None, "课程表仍在，只是没有进行中的课"
@@ -59,7 +59,7 @@ class TestSnapshotRoundTrip:
     def test_退出不影响已完成列表(self, e01, session):
         session.completed_lessons = [1]
         snap = session.to_dict()
-        s2, _ = CourseSession3.restore(e01, FakeLLM([]), snap)
+        s2, _ = CourseSession.restore(e01, FakeLLM([]), snap)
         assert s2.completed_lessons == [1]
 
     def test_答题统计跟着快照走(self, e01, session):
@@ -67,7 +67,7 @@ class TestSnapshotRoundTrip:
         rt.answer(correct=True)
         rt.answer(correct=False)
         snap = session.to_dict(lesson_runtime=rt)
-        _, rt2 = CourseSession3.restore(e01, FakeLLM([]), snap)
+        _, rt2 = CourseSession.restore(e01, FakeLLM([]), snap)
         assert rt2.stats == rt.stats
         assert rt2.wrong_items == rt.wrong_items
 
@@ -81,7 +81,7 @@ class TestTutorReturnsLine:
     """
 
     def test_答错讲解有返回值(self):
-        from ailesson.voice import TutorVoice
+        from ailesson.classroom.voice import TutorVoice
 
         class _T:
             def speak(self, text): return b""
@@ -93,7 +93,7 @@ class TestTutorReturnsLine:
         assert line and "单身" in line
 
     def test_muted_下仍返回文本(self):
-        from ailesson.voice import TutorVoice
+        from ailesson.classroom.voice import TutorVoice
 
         class _T:
             def speak(self, text): return b""
@@ -103,7 +103,7 @@ class TestTutorReturnsLine:
         assert v.queue.pending == [], "muted 时不该进播放队列"
 
     def test_LLM_失败时兜底也带词义(self):
-        from ailesson.voice import TutorVoice
+        from ailesson.classroom.voice import TutorVoice
 
         class _T:
             def speak(self, text): return b""
@@ -114,7 +114,7 @@ class TestTutorReturnsLine:
         assert "单身的" in line and "拽出" in line
 
     def test_答对讲解有返回值(self):
-        from ailesson.voice import TutorVoice
+        from ailesson.classroom.voice import TutorVoice
 
         class _T:
             def speak(self, text): return b""
@@ -133,7 +133,7 @@ class TestSelectionProbePersist:
         session.selection = {"source": "probe",
                              "chunks": [{"id": "c1", "score": 4.0}],
                              "sentences": []}
-        s2, _ = CourseSession3.restore(
+        s2, _ = CourseSession.restore(
             e01, FakeLLM([]), session.to_dict())
         assert s2.selection["source"] == "probe"
         assert len(s2.selection["chunks"]) == 1
@@ -141,7 +141,7 @@ class TestSelectionProbePersist:
     def test_probe_落盘并恢复(self, e01, session):
         session.probe = {"asked": ["a", "b"], "answers": {"a": True},
                          "calibration": {"threshold": 2.5, "confident": True}}
-        s2, _ = CourseSession3.restore(
+        s2, _ = CourseSession.restore(
             e01, FakeLLM([]), session.to_dict())
         assert s2.probe["calibration"]["threshold"] == 2.5
         assert s2.probe["answers"] == {"a": True}
@@ -151,5 +151,5 @@ class TestSelectionProbePersist:
         snap = session.to_dict()
         snap.pop("selection", None)
         snap.pop("probe", None)
-        s2, _ = CourseSession3.restore(e01, FakeLLM([]), snap)
+        s2, _ = CourseSession.restore(e01, FakeLLM([]), snap)
         assert s2.selection == {} and s2.probe == {}

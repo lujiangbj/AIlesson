@@ -4,8 +4,8 @@
 """
 import pytest
 
-from ailesson.llm import FakeLLM
-from ailesson.voice import (
+from ailesson.infra.llm import FakeLLM
+from ailesson.classroom.voice import (
     CANNED,
     TutorVoice,
     VoiceEvent,

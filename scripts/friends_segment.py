@@ -18,8 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from ailesson.segment import segment_episode, spread  # noqa: E402
-from ailesson.vocab_cefr import token_freq  # noqa: E402
+from ailesson.content.segment import segment_episode, spread  # noqa: E402
+from ailesson.content.vocab_cefr import token_freq  # noqa: E402
 
 PARSED = ROOT / "data" / "friends" / "parsed"
 VOCAB = ROOT / "data" / "friends" / "vocab"

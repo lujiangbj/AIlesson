@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .episode import Episode
+from ailesson.contract.episode import Episode
 
 
 @dataclass

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from lemminflect import getAllLemmas
 
-from .vocab_cefr import WORD_RE, spoken_only
+from ailesson.content.vocab_cefr import WORD_RE, spoken_only
 
 # 一个词最多带几句例句进 prompt。多了吃 token，少了词义定不准
 MAX_EXAMPLES = 2

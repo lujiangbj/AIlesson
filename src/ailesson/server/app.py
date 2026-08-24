@@ -23,24 +23,24 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .cache import LLMCache
-from .course3 import CourseSession3
-from .episode import load_episode
-from .lesson3 import SEG3_BY_INDEX, LessonRuntime3
-from .llm import LLMClient, LLMError
-from .probe import (
+from ailesson.course.cache import LLMCache
+from ailesson.session import CourseSession
+from ailesson.contract.episode import load_episode
+from ailesson.classroom.runtime import SEG_BY_INDEX, LessonRuntime
+from ailesson.infra.llm import LLMClient, LLMError
+from ailesson.course.probe import (
     PROBE_N,
     build_items,
     calibrate,
     infer_unknown,
     stratified_probe,
 )
-from .report import LessonReport, render_report_text
-from .selector import build_pool
-from .users import UserStore
-from .voice import TutorVoice
+from ailesson.classroom.report import LessonReport, render_report_text
+from ailesson.course.selector import build_pool
+from ailesson.learner.users import UserStore
+from ailesson.classroom.voice import TutorVoice
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 MVP_ROOT = Path("/Users/haillelou/Claude/nowordenglish/illit-english-mvp")
 DATA = ROOT / "data"
 STATE_FILE = DATA / "state.json"
@@ -88,8 +88,8 @@ class Store:
         self.users = UserStore(DATA)
         self.cache = LLMCache(self.users.cache_dir())
         self.llm = LLMClient()
-        self.session = CourseSession3(self.episode, self.llm)
-        self.runtime: LessonRuntime3 | None = None
+        self.session = CourseSession(self.episode, self.llm)
+        self.runtime: LessonRuntime | None = None
         self.last_report: dict[str, Any] | None = None   # 收课后仍可补写小结
         self.load()
 
@@ -106,7 +106,7 @@ class Store:
         self.users.select(uid)
         self.runtime = None
         self.last_report = None
-        self.session = CourseSession3(self.episode, self.llm)
+        self.session = CourseSession(self.episode, self.llm)
         self.load()
 
     def _is_blank(self) -> bool:
@@ -135,7 +135,7 @@ class Store:
         )
 
     def load(self) -> None:
-        self.session = CourseSession3(self.episode, self.llm)
+        self.session = CourseSession(self.episode, self.llm)
         self.runtime = None
         if not self.uid:
             return
@@ -160,14 +160,14 @@ class Store:
                                saved, self.episode_id)
 
         try:
-            self.session, self.runtime = CourseSession3.restore(
+            self.session, self.runtime = CourseSession.restore(
                 self.episode, self.llm, snap)
         except (KeyError, ValueError) as e:
             # 素材换了或条目改名，旧存档对不上。保留文件但从空态开始，
             # 不要让整个服务起不来
             logger.warning("存档与素材不匹配（%s），本次从空态开始：%s",
                            self.episode_id, e)
-            self.session = CourseSession3(self.episode, self.llm)
+            self.session = CourseSession(self.episode, self.llm)
             self.runtime = None
 
     def paused_info(self) -> dict[str, Any] | None:
@@ -199,7 +199,7 @@ class Store:
             p = self.users.state_path(self.uid)
             if p.exists():
                 p.unlink()
-        self.session = CourseSession3(self.episode, self.llm)
+        self.session = CourseSession(self.episode, self.llm)
         self.runtime = None
         self.last_report = None
 
@@ -470,7 +470,7 @@ def checklist_submit(body: Checklist) -> dict[str, Any]:
             source = "heuristic"
 
         # unknown_* 是只读 property，得写底层 dict。
-        # 同时把没入选的挪回 known——否则 validate_plan3 会报
+        # 同时把没入选的挪回 known——否则 validate_plan 会报
         # "不在待学池里"，而 total_unknown 也会虚高
         for dom, picked in (("sentences", pool["sentences"]),
                             ("chunks", pool["chunks"])):
@@ -486,7 +486,7 @@ def checklist_submit(body: Checklist) -> dict[str, Any]:
         }
 
     try:
-        s.session.plan = s.cache.get_or_build_plan3(ep, a, s.llm)
+        s.session.plan = s.cache.get_or_build_plan(ep, a, s.llm)
     except LLMError as e:
         raise HTTPException(500, f"打包失败：{e}") from e
     s.save()
@@ -609,11 +609,11 @@ class Assess(BaseModel):
     score: int
 
 
-def card_payload(rt: LessonRuntime3, ep) -> dict[str, Any]:
+def card_payload(rt: LessonRuntime, ep) -> dict[str, Any]:
     c = rt.current()
     if c is None:
         return {"finished": True}
-    seg = SEG3_BY_INDEX[c.segment_index]
+    seg = SEG_BY_INDEX[c.segment_index]
 
     def label_of(dom: str, cid: str) -> dict[str, str]:
         if dom == "words":
@@ -857,7 +857,7 @@ def reset() -> dict[str, Any]:
 def lesson_pause() -> dict[str, Any]:
     """中途退出当前节，进度留在原处，下次从同一张卡续上。
 
-    runtime 快照本来就随 save() 落盘（CourseSession3.to_dict 里的 "lesson"），
+    runtime 快照本来就随 save() 落盘（CourseSession.to_dict 里的 "lesson"），
     restore 也早就支持——缺的只是一个"离开但不丢进度"的出口。
     调试期尤其需要：不然一进课就出不来，只能 reset 整集。
     """

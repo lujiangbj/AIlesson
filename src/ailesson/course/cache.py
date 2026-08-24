@@ -11,17 +11,18 @@ import hashlib
 import json
 from pathlib import Path
 
-from .assessment import SelfAssessment
-from .checklist import (
+from ailesson.course.assessment import SelfAssessment
+from ailesson.course.checklist import (
     WordGroup,
     build_checklist,
     build_item_checklist,
     groups_from_dict,
     groups_to_dict,
 )
-from .episode import Episode
-from .llm import BaseLLM
-from .packer3 import CoursePlan3, pack_course3
+from ailesson.contract.episode import Episode
+from ailesson.infra.llm import BaseLLM
+from ailesson.contract.lesson_spec import CoursePlan
+from ailesson.course.planner import pack_course
 
 
 class LLMCache:
@@ -70,10 +71,10 @@ class LLMCache:
 
     # ---- 三层课程划分 ----
 
-    def get_or_build_plan3(
+    def get_or_build_plan(
         self, ep: Episode, a: SelfAssessment, llm: BaseLLM,
         thinking: bool = True, force: bool = False,
-    ) -> CoursePlan3:
+    ) -> CoursePlan:
         key = self._pool_key(
             set(a.unknown_words)
             | {f"c:{x}" for x in a.unknown_chunks}
@@ -81,36 +82,15 @@ class LLMCache:
         )
         p = self._path(f"plan3-{ep.id}-{key}")
         if not force and p.exists():
-            return CoursePlan3.from_dict(json.loads(p.read_text()))
+            return CoursePlan.from_dict(json.loads(p.read_text()))
 
-        plan = pack_course3(ep, a, llm, thinking=thinking)
+        plan = pack_course(ep, a, llm, thinking=thinking)
         if not plan.fallback:
             p.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=1))
         return plan
-
-    # ---- 课程划分（旧：纯词计量）----
 
     @staticmethod
     def _pool_key(pool: set[str]) -> str:
         """池内容决定 key，顺序无关。"""
         blob = ",".join(sorted(pool))
         return hashlib.sha1(blob.encode()).hexdigest()[:12]
-
-    def get_or_build_plan(
-        self,
-        ep: Episode,
-        pool: set[str],
-        llm: BaseLLM,
-        known: set[str] | None = None,
-        thinking: bool = True,
-        force: bool = False,
-    ) -> CoursePlan:
-        p = self._path(f"plan-{ep.id}-{self._pool_key(pool)}")
-        if not force and p.exists():
-            return CoursePlan.from_dict(json.loads(p.read_text()))
-
-        plan = pack_course(ep, pool, llm, known=known, thinking=thinking)
-        # 兜底结果不落盘：下次该重试 LLM，而不是永久用机械划分
-        if not plan.fallback:
-            p.write_text(json.dumps(plan.to_dict(), ensure_ascii=False, indent=1))
-        return plan

@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from ailesson.llm import FakeLLM
-from ailesson.pickable import GOOD, RISKY, UNPICKABLE, PickVerdict, judge_words
+from ailesson.infra.llm import FakeLLM
+from ailesson.content.pickable import GOOD, RISKY, UNPICKABLE, PickVerdict, judge_words
 
 
 def reply(*rows: dict) -> str:

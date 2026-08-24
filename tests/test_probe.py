@@ -5,7 +5,7 @@
 """
 import pytest
 
-from ailesson.probe import (
+from ailesson.course.probe import (
     Calibration,
     Item,
     build_items,

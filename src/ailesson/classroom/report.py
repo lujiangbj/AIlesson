@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .llm import BaseLLM, LLMError
+from ailesson.infra.llm import BaseLLM, LLMError
 
 
 @dataclass

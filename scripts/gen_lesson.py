@@ -20,8 +20,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from ailesson.chunker import candidate_lines, extract  # noqa: E402
-from ailesson.llm import LLMClient  # noqa: E402
+from ailesson.content.chunker import candidate_lines, extract  # noqa: E402
+from ailesson.infra.llm import LLMClient  # noqa: E402
 
 PARSED = ROOT / "data" / "friends" / "parsed"
 ASSETS = ROOT / "data" / "friends" / "assets"

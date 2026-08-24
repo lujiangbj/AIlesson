@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from ailesson.llm import FakeLLM
-from ailesson.vocab_cefr import (
+from ailesson.infra.llm import FakeLLM
+from ailesson.content.vocab_cefr import (
     VocabEntry,
     build_profile,
     candidates,

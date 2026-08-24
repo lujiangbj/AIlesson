@@ -4,7 +4,7 @@
 """
 import pytest
 
-from ailesson.segment import (
+from ailesson.content.segment import (
     Chunk,
     segment_episode,
     split_chunks,

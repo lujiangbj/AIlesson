@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from ailesson.chunker import candidate_lines, extract
-from ailesson.llm import FakeLLM
+from ailesson.content.chunker import candidate_lines, extract
+from ailesson.infra.llm import FakeLLM
 
 
 def line(text: str, speaker: str = "Monica") -> dict:

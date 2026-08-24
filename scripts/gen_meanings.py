@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from ailesson.llm import LLMClient, LLMError  # noqa: E402
+from ailesson.infra.llm import LLMClient, LLMError  # noqa: E402
 
 ASSETS = ROOT / "data" / "friends" / "assets"
 LESSONS = ROOT / "data" / "friends" / "lessons"

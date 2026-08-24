@@ -19,7 +19,7 @@ from typing import Iterable
 
 from lemminflect import getAllLemmas
 
-from .llm import BaseLLM, LLMError
+from ailesson.infra.llm import BaseLLM, LLMError
 
 LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
 

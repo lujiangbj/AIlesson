@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from ailesson.users import User, UserStore
+from ailesson.learner.users import User, UserStore
 
 
 @pytest.fixture

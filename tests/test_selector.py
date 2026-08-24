@@ -5,8 +5,8 @@
 """
 import pytest
 
-from ailesson.episode import Chunk, Episode, Sentence, Word
-from ailesson.selector import (
+from ailesson.contract.episode import Chunk, Episode, Sentence, Word
+from ailesson.course.selector import (
     build_pool,
     pick_chunks,
     pick_sentences,

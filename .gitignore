@@ -16,3 +16,6 @@ data/
 audio/
 venv/
 .jspace/
+
+# 打包产物
+*.egg-info/

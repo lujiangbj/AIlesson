@@ -5,7 +5,7 @@
 """
 import pytest
 
-from ailesson.llm import LLMError, _extract_json
+from ailesson.infra.llm import LLMError, _extract_json
 
 
 class TestStripThinking:

@@ -1,7 +1,7 @@
 """素材加载层测试（NFR-4：数据层零改动，直接读 MVP 的 JSON）。"""
 import pytest
 
-from ailesson.episode import Chunk, Episode, Sentence, Word, load_episode
+from ailesson.contract.episode import Chunk, Episode, Sentence, Word, load_episode
 
 
 @pytest.fixture(scope="module")

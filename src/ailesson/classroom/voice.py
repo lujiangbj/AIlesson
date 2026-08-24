@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol
 
-from .llm import BaseLLM, LLMError
+from ailesson.infra.llm import BaseLLM, LLMError
 
 PRAISE_EVERY = 3          # 连对几次夸一句
 

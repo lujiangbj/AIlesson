@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from ailesson.episode import Episode, Word, Chunk, Sentence
-from ailesson.friends_lesson import build_lesson, coverage_report
+from ailesson.contract.episode import Episode, Word, Chunk, Sentence
+from ailesson.content.friends_lesson import build_lesson, coverage_report
 
 
 @pytest.fixture

@@ -3,10 +3,10 @@ import json
 
 import pytest
 
-from ailesson.cache import LLMCache
-from ailesson.course3 import CourseSession3
-from ailesson.episode import load_episode
-from ailesson.llm import FakeLLM
+from ailesson.course.cache import LLMCache
+from ailesson.session import CourseSession
+from ailesson.contract.episode import load_episode
+from ailesson.infra.llm import FakeLLM
 
 
 @pytest.fixture(scope="module")
@@ -44,10 +44,10 @@ def cet6_known(e01):
 class TestCET6Flow:
     @pytest.fixture
     def session(self, e01):
-        s = CourseSession3(e01, FakeLLM([reply()]))
+        s = CourseSession(e01, FakeLLM([reply()]))
         a = s.submit_checklist(cet6_known(e01))
-        from ailesson.packer3 import pack_course3
-        s.plan = pack_course3(e01, a, s.llm)
+        from ailesson.course.planner import pack_course
+        s.plan = pack_course(e01, a, s.llm)
         return s
 
     def test_教学点总数远超词数(self, session):
@@ -139,17 +139,17 @@ class TestCET6Flow:
 
 class TestPersistence:
     def test_往返(self, e01):
-        from ailesson.packer3 import pack_course3
-        s = CourseSession3(e01, FakeLLM([reply()]))
+        from ailesson.course.planner import pack_course
+        s = CourseSession(e01, FakeLLM([reply()]))
         a = s.submit_checklist(cet6_known(e01))
-        s.plan = pack_course3(e01, a, s.llm)
+        s.plan = pack_course(e01, a, s.llm)
         rt = s.start_lesson(1)
         for _ in range(6):
             c = rt.current()
             rt.answer(True) if c.needs_answer else rt.advance()
 
         snap = json.loads(json.dumps(s.to_dict(lesson_runtime=rt)))
-        s2, rt2 = CourseSession3.restore(e01, FakeLLM([]), snap)
+        s2, rt2 = CourseSession.restore(e01, FakeLLM([]), snap)
         assert s2.assessment == s.assessment
         assert len(s2.plan.lessons) == len(s.plan.lessons)
         assert rt2.cursor == rt.cursor
@@ -159,30 +159,30 @@ class TestPersistence:
 class TestCache:
     def test_打包结果缓存(self, e01, tmp_path):
         c = LLMCache(tmp_path)
-        s = CourseSession3(e01, FakeLLM([reply()]))
+        s = CourseSession(e01, FakeLLM([reply()]))
         a = s.submit_checklist(cet6_known(e01))
-        c.get_or_build_plan3(e01, a, FakeLLM([reply()]))
+        c.get_or_build_plan(e01, a, FakeLLM([reply()]))
         llm = FakeLLM([])           # 一调用就报错
-        plan = c.get_or_build_plan3(e01, a, llm)
+        plan = c.get_or_build_plan(e01, a, llm)
         assert plan.lessons
         assert llm.calls == []
 
     def test_勾选变了要重算(self, e01, tmp_path):
         c = LLMCache(tmp_path)
-        s = CourseSession3(e01, FakeLLM([reply()]))
+        s = CourseSession(e01, FakeLLM([reply()]))
         a1 = s.submit_checklist(cet6_known(e01))
-        c.get_or_build_plan3(e01, a1, FakeLLM([reply()]))
+        c.get_or_build_plan(e01, a1, FakeLLM([reply()]))
         a2 = s.submit_checklist({"words": [], "chunks": [], "sentences": []})
         llm = FakeLLM([reply()])
-        c.get_or_build_plan3(e01, a2, llm)
+        c.get_or_build_plan(e01, a2, llm)
         assert llm.calls, "不同勾选必须重算"
 
     def test_兜底不缓存(self, e01, tmp_path):
         c = LLMCache(tmp_path)
-        s = CourseSession3(e01, FakeLLM([]))
+        s = CourseSession(e01, FakeLLM([]))
         a = s.submit_checklist(cet6_known(e01))
-        plan = c.get_or_build_plan3(e01, a, FakeLLM([]))
+        plan = c.get_or_build_plan(e01, a, FakeLLM([]))
         assert plan.fallback is True
         llm = FakeLLM([reply()])
-        c.get_or_build_plan3(e01, a, llm)
+        c.get_or_build_plan(e01, a, llm)
         assert llm.calls, "兜底结果不该被缓存"

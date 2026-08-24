@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from ailesson.llm import LLMClient, LLMError  # noqa: E402
+from ailesson.infra.llm import LLMClient, LLMError  # noqa: E402
 from gen_cards import NO_DRIFT, STYLE, generate, split_grid  # noqa: E402
 
 ASSETS = ROOT / "data" / "friends" / "assets"

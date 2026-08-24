@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from ailesson.assessment import SelfAssessment, build_assessment
-from ailesson.episode import load_episode
+from ailesson.course.assessment import SelfAssessment, build_assessment
+from ailesson.contract.episode import load_episode
 
 
 @pytest.fixture(scope="module")

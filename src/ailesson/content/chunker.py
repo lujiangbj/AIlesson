@@ -18,8 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from .llm import BaseLLM, LLMError
-from .vocab_cefr import WORD_RE, spoken_only
+from ailesson.infra.llm import BaseLLM, LLMError
+from ailesson.content.vocab_cefr import WORD_RE, spoken_only
 
 # 句子长度窗口：太短没教学价值，太长跟读吃力
 MIN_SENT_WORDS = 4

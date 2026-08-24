@@ -31,9 +31,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from ailesson.llm import LLMClient  # noqa: E402
-from ailesson.pickable import GOOD, RISKY, judge_words  # noqa: E402
-from ailesson.wordsense import collect_senses, unspoken_words  # noqa: E402
+from ailesson.infra.llm import LLMClient  # noqa: E402
+from ailesson.content.pickable import GOOD, RISKY, judge_words  # noqa: E402
+from ailesson.content.wordsense import collect_senses, unspoken_words  # noqa: E402
 
 KEY = "sk-mg-cilsvjyvwgrq5m47n54fmvw4biayh6hnjsuqr5y"
 API = "https://model.zhenguanyu.com/v1/images/generations"

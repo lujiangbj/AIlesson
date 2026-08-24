@@ -5,8 +5,8 @@
 """
 import pytest
 
-from ailesson.llm import FakeLLM
-from ailesson.report import LessonReport, build_report, render_report_text
+from ailesson.infra.llm import FakeLLM
+from ailesson.classroom.report import LessonReport, build_report, render_report_text
 
 
 @pytest.fixture
