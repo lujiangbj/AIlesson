@@ -54,36 +54,69 @@ MVP 阶段追求效果上限，**不考虑成本**。判断类任务（分组、
 需求推翻后，旧模块连同它的测试一起删。留着「带测试的死代码」比删掉更糟 ——
 它看起来是活的，会误导下一次改动。
 
-v0.3 已删：`diagnosis.py` `packer.py` `lesson.py` `course.py` 及其测试。
+同名撞车尤其危险：`LLMCache.get_or_build_plan` 曾有一个 v0.3 就该删的同名旧版本
+定义在后面，把新的静默盖掉，一调就 NameError。
 
 ---
 
 ## 2. 架构
 
-项目有**两条并行线**，改动前先确认自己在哪条上：
-
-### A. 课程引擎（Peppa E01 素材，已能上课）
+五个包 + 一个编排层。**依赖只准朝一个方向走**，`tests/test_layout.py` 用 AST 查
+import，漏回去就红。
 
 ```
-勾选自评 → 打包 → 上课 × N → 报告
+                    contract  ← 谁都读，它谁都不读
+                       │
+   content ─→ [lesson JSON] ─→ course ─→ [LessonSpec] ─→ classroom
+                                   ↘    learner    ↙
+                                      session（编排）
 ```
+
+| 包 | 职责 | 允许依赖 |
+|---|---|---|
+| `contract/` | 素材结构、教具表、课程计划结构 | 无 |
+| `content/` | 教研内容：切段、CEFR 分级、抽短语句子、配图可行性、完备度 | contract、infra |
+| `course/` | 组课：自评、探测、动态挑选、按教学点打包 | contract、infra、learner |
+| `classroom/` | 教室端：教具、编排、课堂运行时、报告、语音旁路 | contract、infra、learner |
+| `learner/` | 学习者数据：用户名册、掌握度与复习调度 | contract、infra |
+| `infra/` | LLM 客户端 | 无 |
+| `session.py` | 编排层，串起以上四块 | 任意 |
+| `server/` | HTTP：`state.py` 应用状态 + `routers/` 按关注点分 | 任意 |
+
+两条关键边界：
+
+- **教研不知道学习者的存在**。内容生产是可复用产物，一旦读了学习者数据就没法预生成。
+- **教室端不依赖组课**。它只吃 `LessonSpec`，不关心那是 LLM 聚类出来的还是手工编的。
+  `LessonSpec` / `CoursePlan` 因此放在 contract，不在 course。
+
+### 文件
 
 | 文件 | 职责 |
 |---|---|
-| `episode.py` | 读素材 JSON，推导句子↔短语↔词的覆盖关系 |
-| `assessment.py` | 三层自评：词/短语/句子各自分池 |
-| `checklist.py` | 三层清单分组（LLM），供铺开勾选 |
-| `packer3.py` | 按**教学点**打包成 N 节课（LLM 场景聚类） |
-| `cards.py` | Card 模型 + 选项构造，三层共用 |
-| `lesson3.py` | 16 环节课程状态机 |
-| `progress.py` | 双向 streak 掌握度 + 复习调度 |
-| `course3.py` | 集级会话，串起全流程 |
-| `voice.py` | 语音旁路：闭嘴规则 + 播放队列 |
-| `report.py` | 课后报告 |
-| `cache.py` | LLM 结果缓存 |
-| `users.py` | 用户系统（无密码）+ 课堂数据记录 |
-| `server.py` | FastAPI + 静态素材托管 |
-| `web/` | 前端（原生 JS，无框架） |
+| `contract/episode.py` | 读素材 JSON，推导句子↔短语↔词的覆盖关系 |
+| `contract/lesson_spec.py` | 一节课的教学点清单 + 一集的课程表 |
+| `contract/tools.py` | **教具表**：7 件教具各自的交互形态、适用域、素材需求 |
+| `classroom/arrangement.py` | **编排**：16 环节各用什么教具、内容从哪来、计不计分 |
+| `classroom/cards.py` | Card 模型（tool + domain + direction）+ 选项构造 |
+| `classroom/runtime.py` | 按编排把一节课展开成卡序并推进 |
+| `classroom/report.py` | 课后报告 |
+| `classroom/voice.py` | 语音旁路：闭嘴规则 + 播放队列 |
+| `course/assessment.py` | 三层自评：词/短语/句子各自分池 |
+| `course/checklist.py` | 三层清单分组（LLM），供铺开勾选 |
+| `course/probe.py` | 听力探测：抽样测短语/句子掌握度，校准后推断其余 |
+| `course/selector.py` | 按待学词池动态挑该练的 chunk 和句子 |
+| `course/planner.py` | 按教学点打包成 N 节课（LLM 场景聚类） |
+| `course/cache.py` | LLM 结果缓存 |
+| `learner/progress.py` | 双向 streak 掌握度 + 复习调度 |
+| `learner/users.py` | 用户系统（无密码）+ 课堂数据记录 |
+| `content/segment.py` | 把一集剧本切成学习段 |
+| `content/vocab_cefr.py` | token → CEFR 词表归一 |
+| `content/chunker.py` | 从剧本抽教学短语和教学句 |
+| `content/pickable.py` | 判断一个词能不能用单张图教 |
+| `content/wordsense.py` | 给待配图的词绑定剧中原句，归并词形变体 |
+| `content/friends_lesson.py` | Friends 资产 → 引擎认的 lesson JSON |
+| `content/completeness.py` | **完备度矩阵**：哪个教学点能跑哪些教具、缺什么素材 |
+| `web/` | 学习者端（`/`）；`web/admin/` 后台（`/admin`） |
 
 ### 存储布局
 
@@ -99,47 +132,41 @@ data/
 可以复用。分用户会白烧钱。
 
 **空会话不许覆盖已有进度**：切用户时会先保存当前会话，如果那是「进程刚起」的空态，
-会静默清掉盘上的进度。`Store._is_blank()` 挡住这种情况。
-
-### B. 老友记内容生产（在建，还没接进引擎）
-
-Peppa 一集 5 分钟 / 53 词；Friends 一集 22 分钟 / 300+ 句 / 300+ 生词，
-**按引擎的容量算要 50 节课**，「一集 = N 节课」的映射会爆掉。所以要先切段 + 分级。
-
-| 文件 | 职责 |
-|---|---|
-| `segment.py` | 把一集剧本切成学习段（按词数近似时长，切点吸附换场边界） |
-| `vocab_cefr.py` | token → CEFR 词表归一（规则直查 + LLM 归一化兜底） |
-| `scripts/friends_parse.py` | 剧本 HTML → 结构化 JSON |
-| `scripts/friends_index.py` | 生成选材索引（句数/词数/平均句长） |
-| `scripts/friends_segment.py` | 试切段，看每段规模 |
-| `scripts/friends_cefr.py` | 词汇按词频 + CEFR 分层 |
-| `data/friends/` | 逐字稿（fangj/friends 全 10 季）+ parsed + vocab |
-| `data/cefr/` | CEFR-J 词表 + Octanove C1C2 词表 |
-
-**两条线的接口**：B 最终要产出 A 能吃的 lesson JSON（words/chunks/sentences +
-音频图片素材）。接口没定之前，别在 A 里为 Friends 加特例。
+会静默清掉盘上的进度。`AppState._is_blank()` 挡住这种情况。
 
 ### 2.1 教学点，不是词
 
 **1 个教学点 = 1 个词 / 1 个短语 / 1 个句子。** 一节课 5~10 个点。
 
-这是 v0.3 最重要的概念。短语和句子是**一等教学点**（各有首触/反向/跟读），
-不是词的配套。一节课可能一个生词都没有 —— 那是目标用户的常态，必须能跑通。
+短语和句子是**一等教学点**（各有首触/反向/跟读），不是词的配套。一节课可能一个生词
+都没有 —— 那是目标用户的常态，必须能跑通。
 
-### 2.2 Tutor 是演员，不是导演
+### 2.2 一节课是教具拼起来的
 
-环节顺序、出哪张卡、什么时候放音频，**全由代码（状态机）决定**。
+教具（`contract/tools.py`）声明三件事：交互形态、适用哪几层、**需要什么素材**。
+最后一项是枢纽 —— `content/completeness.py` 靠它算出「这一集哪些教学点能跑哪些
+教具」，教研后台的矩阵就是这么来的。
+
+环节（`classroom/arrangement.py`）= 一件教具的一次实例化 + 内容来源。原先散在
+运行时里的魔数（`STREAK_SEGMENTS`、`in (3,6,10)`、`== 14`）现在是环节属性
+（`scored` / `first_touch` / `source`）。
+
+加一件教具复用已有交互形态的话，前端不用动 —— 渲染注册表按 `interaction` 分派。
+
+### 2.3 改编排 = 换教材
+
+编排带 `id` + `version`，随快照落盘。**版本不匹配就不许重建课堂**
+（`arrangement.compatible()`）。
+
+理由见 2.5：卡序是确定性重建的，拿新编排恢复旧快照会得到另一副牌，续上错位且不报错。
+改了 `DEFAULT` 的任何一环，记得升 `version`。
+
+### 2.4 Tutor 是演员，不是导演
+
+环节顺序、出哪张卡、什么时候放音频，**全由代码（编排 + 运行时）决定**。
 LLM 只负责「这句话怎么说」。让 LLM 判断「该进下一环节了」会跑偏且不可复现。
 
-### 2.3 语音是旁路
-
-答题永远本地判定、零延迟（`correct = choice === correct_id` 在前端算）。
-Tutor 的话藏在「学生看正确答案」的 1~2s 间隙里。
-
-语音层任何失败（TTS 超时 / LLM 挂 / 评分异常）**都不得阻塞答题**。
-
-### 2.4 卡序必须确定性可重建
+### 2.5 卡序必须确定性可重建
 
 课程可中断续上，所以**卡序不能依赖会变的状态**。
 
@@ -147,7 +174,23 @@ Tutor 的话藏在「学生看正确答案」的 1~2s 间隙里。
 它们的结果必须在建课时定死并随快照落盘（`review_picked`/`spot_picked`/`dir_picked`）。
 否则 restore 时重算会得到另一副牌，续上错位到别的卡。
 
+编排本身也是重建输入的一部分，见 2.3。
+
 这类 bug 只有端到端才会暴露，写回归测试钉死。
+
+### 2.6 语音是旁路
+
+答题永远本地判定、零延迟（`correct = choice === correct_id` 在前端算）。
+Tutor 的话藏在「学生看正确答案」的 1~2s 间隙里。
+
+语音层任何失败（TTS 超时 / LLM 挂 / 评分异常）**都不得阻塞答题**。
+
+### 2.7 内容线还没接进引擎
+
+Peppa 一集 5 分钟 / 53 词；Friends 一集 22 分钟 / 300+ 句 / 300+ 生词，
+按引擎的容量算要 50 节课，「一集 = N 节课」的映射会爆掉。所以要先切段 + 分级。
+
+**接口没定之前，别在 course/ 或 classroom/ 里为 Friends 加特例。**
 
 ---
 
@@ -216,17 +259,23 @@ bash scripts/start.sh          # 启动，→ http://127.0.0.1:8791
 
 ## 7. 已知缺口
 
-引擎线（A）：
+引擎线：
 
 1. **跟读只有「念好了/念不出来」两个按钮，没有真评分** ← 当前最大缺口。
    本地 wav2vec2 音素模型已验证可行（0 成本、定位具体错音、10s 音频 361ms）。
 2. 打包要 20~40s 干等，没有进度提示。
 3. TTS 未接（只有答错讲解走 LLM 文本）。
-4. 只有 Peppa E01 一集素材。
 
-内容线（B）：
+内容线：
 
-5. 切段和 CEFR 分级有了，但**还没产出引擎能吃的 lesson JSON** ——
-   缺短语/句子的挑选、配图、TTS、原片切片。
-6. 逐字稿**没有时间轴**（不是字幕文件），所以 `audio_clip` 拿不到 ——
-   而句子原声是引擎 FR-4.5 的硬要求。这是接通两条线的主要障碍。
+4. **Friends 的 76 个句子全部缺原片切片**。逐字稿没时间轴，`audio_clip` 现在填的
+   是 TTS —— 后台完备度矩阵会把这条报出来。而句子原声是 FR-4.5 的硬要求（听懂真实
+   语流是产品核心），这是接通两条线的主要障碍。可选：强制对齐（whisper + 原片音轨）
+   ／找带时间轴的字幕源。
+5. Friends 一集 = 多段，每段 = N 节课。现有三层结构（集 → 课）要多加一层「段」，
+   或把「段」当成引擎眼里的「集」。后者改动小，倾向后者。
+
+后台：
+
+6. 三个后台都是**只读**的。教具表和编排改起来还要动代码 ——
+   改完编排记得升 `version`（见 2.3）。

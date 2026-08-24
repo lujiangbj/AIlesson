@@ -26,9 +26,9 @@ while true; do
   FIN=$(echo "$CARD" | J "d=json.load(sys.stdin);print(d.get('finished',False))")
   [ "$FIN" = "True" ] && break
   N=$((N+1)); [ $N -gt 300 ] && break
-  KIND=$(echo "$CARD" | J "print(json.load(sys.stdin)['kind'])")
+  ACT=$(echo "$CARD" | J "print(json.load(sys.stdin)['interaction'])")
   NEED=$(echo "$CARD" | J "print(json.load(sys.stdin)['needs_answer'])")
-  if [ "$KIND" = "assess" ]; then CARD=$(post /api/lesson/assess '{"score":2}')
+  if [ "$ACT" = "assess" ]; then CARD=$(post /api/lesson/assess '{"score":2}')
   elif [ "$NEED" = "True" ]; then
     CID=$(echo "$CARD" | J "print(json.load(sys.stdin)['correct_id'])")
     OK=$([ $((N % 7)) -eq 0 ] && echo false || echo true)

@@ -2,7 +2,7 @@
 """把 Friends 资产打包成课程引擎能读的 lesson JSON。
 
 产出 data/friends/lessons/lesson-friends-<ep>.json，结构对齐 MVP，
-让 episode.py / lesson3.py 零改动就能跑。
+让 contract/episode.py 和课堂运行时零改动就能跑。
 
 用法:
     python3 scripts/friends_to_lesson.py 0101

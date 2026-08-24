@@ -48,21 +48,45 @@ MVP 无密码。老的单用户 `data/state.json` 会自动迁移到用户「我
 
 ## 模块
 
-| 文件 | 职责 |
+四块分开迭代，靠契约层解耦。依赖方向由 `tests/test_layout.py` 守着。
+
+```
+                    contract  ← 谁都读，它谁都不读
+                       │
+   content ─→ [lesson JSON] ─→ course ─→ [LessonSpec] ─→ classroom
+                                   ↘    learner    ↙
+                                      session（编排）
+```
+
+| 包 | 职责 |
 |---|---|
-| `episode.py` | 读素材 JSON（零改动），推导句子↔短语↔词覆盖关系 |
-| `assessment.py` | 三层自评分池 |
-| `checklist.py` | 三层清单分组（LLM） |
-| `packer3.py` | 按教学点打包成 N 节课（LLM 场景聚类） |
-| `cards.py` | Card 模型 + 选项构造 |
-| `lesson3.py` | 16 环节课程状态机 |
-| `progress.py` | 双向 streak 掌握度 + 复习调度 |
-| `course3.py` | 集级会话 |
-| `voice.py` | 语音旁路：闭嘴规则 + 播放队列 |
-| `report.py` | 课后报告 |
-| `cache.py` | LLM 结果缓存（全局，不分用户） |
-| `users.py` | 用户系统（无密码）+ 课堂数据记录 |
-| `server.py` | FastAPI + 素材托管 |
+| `contract/` | 素材结构、**教具表**、课程计划结构 |
+| `content/` | 教研内容：切段、CEFR 分级、抽短语句子、配图可行性、完备度矩阵 |
+| `course/` | 组课：自评、听力探测、动态挑选、按教学点打包 |
+| `classroom/` | 教室端：**编排**、课堂运行时、卡片、报告、语音旁路 |
+| `learner/` | 学习者数据：用户名册、双向 streak 掌握度、复习调度 |
+| `session.py` | 编排层，串起以上四块 |
+| `server/` | HTTP：`state.py` 应用状态 + `routers/` 六个关注点 |
+
+两条边界是这个划分的意义所在：
+
+- 教研不知道学习者的存在 —— 内容生产是可复用产物，读了学习者数据就没法预生成。
+- 教室端不依赖组课 —— 它只吃 `LessonSpec`，不关心那是 LLM 聚类的还是手工编的。
+
+### 一节课是教具拼起来的
+
+教具声明「交互形态 + 适用哪几层 + **需要什么素材**」。最后一项让内容完备度可计算：
+后台能直接告诉你这一集哪些教学点跑不了哪些教具、缺的是什么。
+
+环节 = 一件教具的一次实例化 + 内容来源。编排是带版本号的配置，改它等于换教材 ——
+版本不匹配的旧快照不许重建课堂，否则续上会错位到别的卡。
+
+## 两个入口
+
+| | 地址 | 给谁 |
+|---|---|---|
+| 学习者端 | `/` | 上课。横屏 iPad 课堂布局 |
+| 后台 | `/admin` | 教具表 / 编排 / 课程计划检查器 / 内容完备度 |
 
 ## 目录
 
@@ -71,8 +95,16 @@ AIlesson/
 ├── CLAUDE.md              # ⭐ 开发规则
 ├── docs/requirements/     # ⭐ PRD
 ├── docs/                  # 子策划01（多Agent）、02（实时语音流水线）
-├── src/ailesson/          # 引擎
-├── web/                   # 前端（原生 JS）
+├── src/ailesson/
+│   ├── contract/          # 素材 / 教具表 / 课程计划
+│   ├── content/           # 教研内容线
+│   ├── course/            # 组课
+│   ├── classroom/         # 教室端（编排 + 运行时）
+│   ├── learner/           # 学习者数据
+│   ├── session.py         # 编排层
+│   └── server/            # state + routers
+├── web/                   # 学习者端（原生 JS，无框架）
+├── web/admin/             # 后台
 ├── tests/                 # TDD 测试
 ├── scripts/
 │   ├── start.sh           # 启动
@@ -110,8 +142,8 @@ AIlesson/
 
 | | A · 课程引擎 | B · 老友记内容生产 |
 |---|---|---|
-| 状态 | ✅ 能上课（Peppa E01） | 🚧 在建，未接进引擎 |
-| 代码 | `episode/assessment/checklist/packer3/lesson3/course3` | `segment.py` `vocab_cefr.py` `scripts/friends_*.py` |
+| 状态 | ✅ 能上课（Peppa E01） | 🚧 素材已产出，缺原片切片 |
+| 代码 | `contract/` `course/` `classroom/` `learner/` | `content/` `scripts/friends_*.py` |
 | 数据 | illit-english-mvp 素材（只读） | `data/friends/` `data/cefr/` |
 
 B 要产出 A 能吃的 lesson JSON。两个待解问题见 PRD §12：Friends 一集要 50 节课
@@ -124,4 +156,6 @@ B 要产出 A 能吃的 lesson JSON。两个待解问题见 PRD §12：Friends �
 1. **跟读只有「念好了/念不出来」两个按钮，没有真评分** ← 最大缺口，本地方案已验证可行
 2. 打包要 20~40s 干等，没有进度提示
 3. TTS 未接（只有答错讲解走 LLM 文本）
-4. 引擎只有 Peppa E01；老友记内容线还没产出可用素材
+4. **Friends 的 76 个句子全部缺原片切片** —— 逐字稿没时间轴，`audio_clip` 现在填的
+   是 TTS。后台完备度矩阵会把这条报出来。句子原声是产品核心，这是接通两条线的主要障碍
+5. 三个后台都是只读的，改教具和编排还要动代码

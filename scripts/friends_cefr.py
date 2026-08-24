@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """给一集剧本的词汇按词频 + CEFR 等级分层，输出选材用的分级表。
 
-两层处理（见 src/ailesson/vocab_cefr.py）：
+两层处理（见 src/ailesson/content/vocab_cefr.py）：
 1. 规则：词形还原后直查 CEFR-J 词表
 2. LLM：把查不到的送模型归一化（goodnight→good night、kinda→kind of），
    再回查词表——词表等级优先，查不到才用 LLM 估级

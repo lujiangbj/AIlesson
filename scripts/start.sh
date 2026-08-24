@@ -11,5 +11,6 @@ if lsof -ti ":$PORT" >/dev/null 2>&1; then
   sleep 1
 fi
 
-echo "AIlesson → http://127.0.0.1:$PORT"
-PYTHONPATH=src AILESSON_PORT=$PORT .venv/bin/python -m ailesson.server
+echo "AIlesson  学习者 → http://127.0.0.1:$PORT"
+echo "          后台   → http://127.0.0.1:$PORT/admin"
+PYTHONPATH=src AILESSON_PORT=$PORT .venv/bin/python -m ailesson.server.app
