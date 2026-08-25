@@ -7,7 +7,15 @@ const nav = document.getElementById('nav');
 const headRight = document.getElementById('head-right');
 
 const S = {
-  view: 'tools',
+  view: 'scripts',
+  scripts: null,
+  script: null,       // 当前展开的剧本 id
+  chunks: null,       // 换场切出的最小单位
+  segPlan: null,      // 切段效果
+  segN: null,         // 预览段数（null = 用落盘/自动）
+  compare: null,      // 几种段数并排比
+  segLines: null,     // 展开的某段台词
+  openSeg: null,
   tools: null,
   arrangement: null,
   plan: null,
@@ -20,6 +28,7 @@ const S = {
 };
 
 const VIEWS = [
+  ['scripts', '剧本与切段'],
   ['tools', '教具'],
   ['arrangement', '编排'],
   ['plan', '课程计划'],
@@ -58,6 +67,13 @@ function bar(ok, total) {
            [h('i', { style: `width:${p}%` })]);
 }
 
+// 中性的相对大小条。bar() 会给不满 100% 的上橙色（那在别处表示「缺素材」），
+// 用来比 chunk 大小会误导
+function sizeBar(v, max) {
+  return h('div', { class: 'bar neutral' },
+           [h('i', { style: `width:${pct(v, max)}%` })]);
+}
+
 function panel(title, sub, kids) {
   return h('section', { class: 'panel' }, [
     h('h2', {}, [title]),
@@ -72,6 +88,209 @@ function table(headers, rows) {
       x => h('th', { class: x.num ? 'num' : '' }, [x.label ?? x])))]),
     h('tbody', {}, rows),
   ]);
+}
+
+// ---------- 剧本与切段 ----------
+//
+// 第一步（逐字稿来源 + 切段规则）走代码，规则由人给。这里只读 ——
+// 职责是把「切成了什么样」摊开到能判断规则对不对。
+
+function viewScripts() {
+  const d = S.scripts;
+  if (!d) return [h('div', { class: 'empty' }, ['加载中…'])];
+  if (!d.scripts.length) {
+    return [panel('剧本', '', [
+      h('div', { class: 'note' },
+        ['还没有解析好的剧本。先跑 scripts/friends_parse.py']),
+    ])];
+  }
+
+  const out = [
+    panel('剧本', `切段规则：${d.rule}`, [
+      table(
+        ['集', '标题', { label: '句', num: true }, { label: '换场', num: true },
+         { label: '人物', num: true }, '词表', '切段', 'lesson', ''],
+        d.scripts.map(s => h('tr', {}, [
+          h('td', {}, [h('b', {}, [s.episode_id])]),
+          h('td', {}, [s.title || '—']),
+          h('td', { class: 'num' }, [String(s.lines)]),
+          h('td', { class: 'num' }, [String(s.scenes)]),
+          h('td', { class: 'num' }, [String(s.speakers)]),
+          h('td', {}, [step(s.has_vocab)]),
+          h('td', {}, [s.has_segments
+            ? h('span', { class: 'tag ok' }, [`${s.n_segments} 段`])
+            : step(false)]),
+          h('td', {}, [step(s.has_lesson)]),
+          h('td', {}, [h('button', {
+            class: 'act' + (S.script === s.episode_id ? ' on' : ''),
+            onclick: () => openScript(s.episode_id),
+          }, [S.script === s.episode_id ? '收起' : '看切段'])]),
+        ]))
+      ),
+    ]),
+  ];
+
+  if (S.script) {
+    out.push(...chunkPanels());
+    out.push(...segPanels());
+  }
+  return out;
+}
+
+function step(done) {
+  return done ? h('span', { class: 'tag ok' }, ['已有'])
+              : h('span', { class: 'tag' }, ['未做']);
+}
+
+// 换场切出的 chunk 是切段的最小单位 —— 最大的那个决定了段大小的下限
+function chunkPanels() {
+  const c = S.chunks;
+  if (!c) return [h('section', { class: 'panel' }, ['算 chunk…'])];
+  const floorPct = Math.round(c.floor_words / c.total_words * 100);
+  return [
+    panel(`${c.episode_id} · 换场切出 ${c.n_chunks} 个 chunk`,
+      '切段的最小单位。任何一段至少包含一个完整 chunk —— 所以最大的 chunk '
+      + '就是段大小的下限。', [
+      floorPct >= 25
+        ? h('div', { class: 'note bad' }, [
+            `第 ${c.floor_at} 个 chunk 有 ${c.floor_words} 词，占全集 ${floorPct}%，`
+            + '切不开。任何包含它的段都至少这么大 —— 段数切得再多，这一段也不会变小，'
+            + '只会让其它段更碎。要更均就得允许在场景内部切（用舞台提示当次级边界）。',
+          ])
+        : h('div', { class: 'note' }, [
+            `最大 chunk ${c.floor_words} 词（占 ${floorPct}%），不构成瓶颈。`,
+          ]),
+      table(['#', '地点', { label: '句', num: true }, { label: '词', num: true },
+             { label: '占比', num: true }, ''],
+        c.chunks.map(x => h('tr', {}, [
+          h('td', { class: 'dim' }, [String(x.index)]),
+          h('td', {}, [x.location]),
+          h('td', { class: 'num' }, [String(x.lines)]),
+          h('td', { class: 'num' }, [
+            String(x.words),
+            x.index === c.floor_at
+              ? h('span', { class: 'tag bad' }, ['下限']) : null,
+          ]),
+          h('td', { class: 'num dim' }, [`${x.share}%`]),
+          h('td', { style: 'width:140px' }, [sizeBar(x.words, c.floor_words)]),
+        ]))),
+    ]),
+  ];
+}
+
+function segPanels() {
+  const p = S.segPlan;
+  if (!p) return [h('section', { class: 'panel' }, ['算切段…'])];
+  const out = [];
+
+  // 段数选择：并排比，而不是一份一份点开
+  const cmp = S.compare;
+  out.push(panel('切几段',
+    cmp && cmp.most_even ? `${cmp.most_even} 段最齐` : '', [
+    h('div', { class: 'row' }, [
+      h('button', {
+        class: 'act' + (S.segN === null ? ' on' : ''),
+        onclick: () => loadSeg(S.script, null),
+      }, ['自动']),
+      ...(cmp ? cmp.options.map(o => h('button', {
+        class: 'act' + (S.segN === o.n ? ' on' : ''),
+        onclick: () => loadSeg(S.script, o.n),
+      }, [`${o.n} 段`])) : []),
+    ]),
+    cmp ? table(
+      ['段数', { label: '不均衡度', num: true }, '各段词数'],
+      cmp.options.map(o => h('tr', {}, [
+        h('td', {}, [
+          `${o.n} 段`,
+          o.n === cmp.most_even
+            ? h('span', { class: 'tag ok' }, ['最齐']) : null,
+        ]),
+        h('td', { class: 'num' }, [
+          o.spread.toFixed(3),
+          o.spread > 1.5 ? h('span', { class: 'tag bad' }, ['偏']) : null,
+        ]),
+        h('td', { class: 'dim' }, [o.words.join(' / ')]),
+      ]))) : null,
+    h('div', { class: 'note' }, [
+      '不均衡度 = 最大段词数 / 平均段词数。1.0 是完美均分。',
+    ]),
+  ]));
+
+  // 切段效果
+  out.push(panel(
+    `切成 ${p.n} 段` + (p.auto ? '（自动选的段数）' : ''),
+    `${p.total_lines} 句 / ${p.total_words} 词 · 不均衡度 ${p.spread}`
+    + (p.saved ? ' · 已落盘' : ' · 预览，未落盘'), [
+    table(
+      ['段', { label: '场', num: true }, { label: '句', num: true },
+       { label: '词', num: true }, { label: '时长', num: true },
+       { label: '生词', num: true }, { label: '≈课', num: true },
+       '地点', ''],
+      p.segments.map(s => h('tr', {}, [
+        h('td', {}, [h('b', {}, [String(s.index)])]),
+        h('td', { class: 'num dim' }, [String(s.scenes.length)]),
+        h('td', { class: 'num' }, [String(s.lines)]),
+        h('td', { class: 'num' }, [String(s.words)]),
+        h('td', { class: 'num dim' }, [`${s.minutes}'`]),
+        h('td', { class: 'num' }, [
+          s.new_words === null ? '—' : String(s.new_words)]),
+        h('td', { class: 'num dim' }, [
+          s.est_lessons === null ? '—' : String(s.est_lessons)]),
+        h('td', { class: 'dim' }, [s.locations.slice(0, 2).join(' · ')]),
+        h('td', {}, [h('button', {
+          class: 'act' + (S.openSeg === s.index ? ' on' : ''),
+          onclick: () => openSegLines(s.index),
+        }, [S.openSeg === s.index ? '收起' : '看台词'])]),
+      ]))
+    ),
+    p.segments[0] && p.segments[0].new_words === null
+      ? h('div', { class: 'note' }, [
+          '生词量要先跑 scripts/friends_cefr.py <集> --llm --json',
+        ])
+      : h('div', { class: 'note' }, [
+          `≈课 = 生词数 / ${p.words_per_lesson}（每节课的重点词数）。`
+          + '这一栏是「这段能出几节课」的估算。',
+        ]),
+  ]));
+
+  // 切点核对：最终得看原文
+  if (S.openSeg !== null && S.segLines) {
+    const d = S.segLines;
+    out.push(panel(`第 ${d.index} 段台词`,
+      `${d.lines} 句 / ${d.words} 词 · ${d.locations.join(' · ')}`, [
+      h('div', { style: 'max-height:420px;overflow:auto' },
+        d.items.map(it => it.type === 'scene'
+          ? h('div', {
+              style: 'margin:12px 0 6px;font-weight:600;color:#2563eb',
+            }, ['◆ ' + it.text])
+          : h('div', { style: 'padding:2px 0' }, [
+              h('span', { class: 'dim', style: 'display:inline-block;min-width:92px' },
+                [it.speaker + '：']),
+              it.text,
+            ]))),
+    ]));
+  }
+
+  // 每段起止：不展开台词也能核对切点
+  out.push(panel('切点', '每段从哪句起、到哪句止。', [
+    table(['段', '起', '止'], p.segments.map(s => h('tr', {}, [
+      h('td', {}, [String(s.index)]),
+      h('td', { class: 'dim' }, [s.first_line
+        ? `${s.first_line.speaker}：${s.first_line.text}` : '—']),
+      h('td', { class: 'dim' }, [s.last_line
+        ? `${s.last_line.speaker}：${s.last_line.text}` : '—']),
+    ]))),
+  ]));
+
+  out.push(panel('这一步还没定型', '', [
+    h('div', { class: 'note' }, [
+      `当前规则：${p.rule}。`,
+      h('br', {}),
+      '逐字稿来源和切段规则由人给、走代码改；这一页只读。'
+      + '规则定型后这里会加重切、调段数、手动挪切点。',
+    ]),
+  ]));
+  return out;
 }
 
 // ---------- 教具 ----------
@@ -446,8 +665,9 @@ function render() {
     ]));
     return;
   }
-  const v = { tools: viewTools, arrangement: viewArrangement,
-              plan: viewPlan, content: viewContent }[S.view];
+  const v = { scripts: viewScripts, tools: viewTools,
+              arrangement: viewArrangement, plan: viewPlan,
+              content: viewContent }[S.view];
   for (const node of v()) app.appendChild(node);
 }
 
@@ -458,6 +678,9 @@ async function go(view, fromHash = false) {
   if (!fromHash && location.hash.slice(1) !== view) location.hash = view;
   render();
   try {
+    if (view === 'scripts' && !S.scripts) {
+      S.scripts = await get('/api/content/scripts');
+    }
     if (view === 'tools' && !S.tools) S.tools = await get('/api/admin/tools');
     if (view === 'arrangement' && !S.arrangement) {
       S.arrangement = await get('/api/admin/arrangement');
@@ -478,6 +701,50 @@ async function loadContent() {
   S.completeness = await get(
     '/api/content/completeness?arrangement_only=' + S.arrangementOnly);
   if (!S.tools) S.tools = await get('/api/admin/tools');
+  render();
+}
+
+async function openScript(id) {
+  if (S.script === id) {
+    S.script = S.chunks = S.segPlan = S.compare = S.segLines = null;
+    S.openSeg = null;
+    render();
+    return;
+  }
+  S.script = id;
+  S.chunks = S.segPlan = S.compare = S.segLines = null;
+  S.openSeg = null;
+  S.segN = null;
+  render();
+  try {
+    S.chunks = await get(`/api/content/scripts/${id}/chunks`);
+    render();
+    S.compare = await get(`/api/content/scripts/${id}/compare?lo=3&hi=7`);
+    await loadSeg(id, null);
+  } catch (e) {
+    S.err = e.message;
+    render();
+  }
+}
+
+async function loadSeg(id, n) {
+  S.segN = n;
+  S.segPlan = null;
+  S.segLines = null;
+  S.openSeg = null;
+  render();
+  const q = n === null ? '' : `?n=${n}`;
+  S.segPlan = await get(`/api/content/scripts/${id}/segments${q}`);
+  render();
+}
+
+async function openSegLines(index) {
+  if (S.openSeg === index) { S.openSeg = null; S.segLines = null; render(); return; }
+  S.openSeg = index;
+  S.segLines = null;
+  render();
+  S.segLines = await get(
+    `/api/content/scripts/${S.script}/segments/${index}/lines`);
   render();
 }
 

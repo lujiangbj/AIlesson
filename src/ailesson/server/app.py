@@ -13,12 +13,14 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from ailesson.server import state as st
-from ailesson.server.routers import admin, content, course, lesson, status, users
+from ailesson.server.routers import (
+    admin, content, course, lesson, segments, status, users,
+)
 
 app = FastAPI(title="AIlesson")
 
 for r in (users.router, status.router, course.router, lesson.router,
-          content.router, admin.router):
+          content.router, segments.router, admin.router):
     app.include_router(r)
 
 
