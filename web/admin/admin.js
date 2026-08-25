@@ -451,9 +451,11 @@ function render() {
   for (const node of v()) app.appendChild(node);
 }
 
-async function go(view) {
+async function go(view, fromHash = false) {
   S.view = view;
   S.err = null;
+  // 每块要能直达和分享，所以视图进 hash（#tools / #arrangement / #plan / #content）
+  if (!fromHash && location.hash.slice(1) !== view) location.hash = view;
   render();
   try {
     if (view === 'tools' && !S.tools) S.tools = await get('/api/admin/tools');
@@ -489,11 +491,23 @@ async function openCards(index) {
   render();
 }
 
+const VIEW_IDS = VIEWS.map(([id]) => id);
+
+function viewFromHash() {
+  const h = location.hash.slice(1);
+  return VIEW_IDS.includes(h) ? h : 'tools';
+}
+
+window.addEventListener('hashchange', () => {
+  const v = viewFromHash();
+  if (v !== S.view) go(v, true);
+});
+
 (async () => {
   try {
     S.status = await get('/api/status');
   } catch (e) {
     S.err = e.message;
   }
-  await go('tools');
+  await go(viewFromHash(), true);
 })();
