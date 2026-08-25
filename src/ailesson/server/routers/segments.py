@@ -183,8 +183,11 @@ def segment_lines(ep_id: str, index: int) -> dict[str, Any]:
     if not 1 <= index <= plan.n:
         raise HTTPException(404, f"{ep_id} 没有第 {index} 段")
 
-    # 按落盘的段边界重放一遍 chunk，取这一段的台词
-    cs = split_chunks(doc["items"])
+    # 按落盘的段边界重放一遍 chunk，取这一段的台词。
+    # **必须用计划当初那套边界**：计划按 scene+stage 切（27 个单位）、这里按
+    # scene 切（13 个）的话，拿前者的 chunk 数去套后者会让前几段吞掉全部台词、
+    # 后几段空。合计恰好等于全集，所以「加起来对不对」查不出来
+    cs = split_chunks(doc["items"], use_stage=plan.use_stage)
     counts = [s.get("n_chunks") or len(s["scenes"]) or 1
               for s in plan.segments]
     pos = sum(counts[: index - 1])
@@ -200,9 +203,29 @@ def segment_lines(ep_id: str, index: int) -> dict[str, Any]:
                 "text": ln.get("text") or "",
             })
     seg = plan.segments[index - 1]
+
+    # 这一段的生词清单。光有个数字看不出要教什么 —— 词表在手才能判断
+    # 「这段值不值得做成课」
+    texts = [i["text"] for i in out if i["type"] == "line"]
+    words: list[dict[str, Any]] = []
+    levels = _levels(ep_id)
+    if levels is not None:
+        from ailesson.content.segment import KNOWN_LEVEL
+        from ailesson.content.vocab_cefr import token_freq
+
+        freq = token_freq(texts)
+        for tok, n in sorted(freq.items(), key=lambda kv: -kv[1]):
+            lv = levels.get(tok)
+            if lv and lv != KNOWN_LEVEL:
+                words.append({"token": tok, "level": lv, "count": n})
+
     return {
         "episode_id": ep_id, "index": index,
         "words": seg["words"], "lines": seg["lines"],
+        "minutes": seg["minutes"],
         "locations": seg["locations"],
+        "scenes": seg["scenes"],
+        "new_words": words,
+        "known_level": "A1",
         "items": out,
     }

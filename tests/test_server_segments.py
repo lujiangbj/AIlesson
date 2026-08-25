@@ -161,3 +161,110 @@ class TestSegmentLines:
     def test_段号越界404(self, client):
         assert client.get(
             "/api/content/scripts/0101/segments/99/lines").status_code == 404
+
+    def test_带地点和场景清单(self, client):
+        d = client.get("/api/content/scripts/0101/segments/1/lines").json()
+        assert d["locations"]
+        assert "scenes" in d
+
+    def test_没词表时生词清单为空(self, client):
+        """fixture 没塞词表，不能凭空造生词。"""
+        d = client.get("/api/content/scripts/0101/segments/1/lines").json()
+        assert d["new_words"] == []
+
+
+class TestStageAlignment:
+    """落盘计划用了次级边界时，取台词也必须用同一套边界。
+
+    实测 bug：计划按 scene+stage 切（27 个单位），取台词却按 scene 切（13 个），
+    拿前者的 chunk 数去套后者 —— 前三段吞掉全部台词，后两段空。
+    合计恰好等于全集，所以「加起来对不对」查不出来，必须逐段核对。
+    """
+
+    @pytest.fixture
+    def with_stage(self, client, tmp_path, monkeypatch):
+        """剧本含舞台提示，并按 use_stage 切好落盘。"""
+        import json as _json
+
+        import ailesson.server.routers.segments as seg
+        from ailesson.content.segment import SegmentPlan, save_plan
+
+        doc = _json.loads((seg.PARSED / "0101.json").read_text())
+        # 往第一个场景里塞两个舞台提示，制造可用的次级边界
+        items, hit = [], 0
+        for it in doc["items"]:
+            items.append(it)
+            if it["type"] == "line" and hit < 2:
+                items.append({"type": "stage", "text": f"Time Lapse {hit}"})
+                hit += 1
+        doc["items"] = items
+        (seg.PARSED / "0101.json").write_text(_json.dumps(doc))
+
+        plan = SegmentPlan.build("0101", items, n=3, use_stage=True)
+        save_plan(plan, seg.SEGMENTS)
+        return client
+
+    def test_落盘计划标了用次级边界(self, with_stage):
+        d = with_stage.get("/api/content/scripts/0101/segments").json()
+        assert d["saved"] is True
+        assert d["use_stage"] is True
+
+    def test_每段句数与计划一致(self, with_stage):
+        """header 说 59 句就得渲染 59 句。"""
+        plan = with_stage.get("/api/content/scripts/0101/segments").json()
+        for s in plan["segments"]:
+            d = with_stage.get(
+                f"/api/content/scripts/0101/segments/{s['index']}/lines").json()
+            got = len([x for x in d["items"] if x["type"] == "line"])
+            assert got == s["lines"], f"第 {s['index']} 段：说 {s['lines']} 实际 {got}"
+
+    def test_没有空段(self, with_stage):
+        plan = with_stage.get("/api/content/scripts/0101/segments").json()
+        for s in plan["segments"]:
+            d = with_stage.get(
+                f"/api/content/scripts/0101/segments/{s['index']}/lines").json()
+            assert any(x["type"] == "line" for x in d["items"]), s["index"]
+
+    def test_生词数与计划一致(self, with_stage):
+        plan = with_stage.get("/api/content/scripts/0101/segments").json()
+        for s in plan["segments"]:
+            if s["new_words"] is None:
+                continue
+            d = with_stage.get(
+                f"/api/content/scripts/0101/segments/{s['index']}/lines").json()
+            assert len(d["new_words"]) == s["new_words"], s["index"]
+
+
+class TestNewWords:
+    """每段的生词清单：光有个数字看不出要教什么。"""
+
+    @pytest.fixture
+    def with_vocab(self, client, tmp_path):
+        import ailesson.server.routers.segments as seg
+        v = seg.VOCAB
+        v.mkdir(parents=True, exist_ok=True)
+        (v / "0101.json").write_text(json.dumps({"entries": [
+            {"token": "word", "level": "B1", "category": "word"},
+            {"token": "the", "level": "A1", "category": "word"},
+        ]}, ensure_ascii=False))
+        return client
+
+    def test_列出生词及等级和出现次数(self, with_vocab):
+        d = with_vocab.get(
+            "/api/content/scripts/0101/segments/1/lines").json()
+        assert d["new_words"]
+        w = d["new_words"][0]
+        assert w["token"] == "word"
+        assert w["level"] == "B1"
+        assert w["count"] > 1
+
+    def test_已会等级不进清单(self, with_vocab):
+        d = with_vocab.get(
+            "/api/content/scripts/0101/segments/1/lines").json()
+        assert all(w["level"] != "A1" for w in d["new_words"])
+
+    def test_按出现次数降序(self, with_vocab):
+        d = with_vocab.get(
+            "/api/content/scripts/0101/segments/1/lines").json()
+        counts = [w["count"] for w in d["new_words"]]
+        assert counts == sorted(counts, reverse=True)

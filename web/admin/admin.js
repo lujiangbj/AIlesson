@@ -190,6 +190,62 @@ function step(done) {
               : h('span', { class: 'tag' }, ['未做']);
 }
 
+// CEFR 等级配色：越高越显眼（越可能是要教的重点）
+const LEVEL_CLS = { A1: '', A2: '', B1: 'warn', B2: 'warn', C1: 'bad', C2: 'bad' };
+
+// 一段的详细情况：规模 → 场景 → 生词清单 → 台词原文
+function segDetail(d) {
+  const byLevel = {};
+  for (const w of d.new_words) byLevel[w.level] = (byLevel[w.level] || 0) + 1;
+
+  return panel(`第 ${d.index} 段`,
+    `${d.lines} 句 / ${d.words} 词 / 约 ${d.minutes} 分钟 · `
+    + `${d.new_words.length} 个生词（${d.known_level} 及以下算已会）`, [
+
+    // 场景走向
+    h('div', { class: 'row', style: 'margin-bottom:10px' }, [
+      h('span', { class: 'dim' }, ['场景：']),
+      ...d.locations.map(x => h('span', { class: 'tag' }, [x])),
+    ]),
+
+    // 生词清单 —— 这段教什么，看这里
+    d.new_words.length
+      ? h('div', {}, [
+          h('div', { class: 'row', style: 'margin:14px 0 8px' }, [
+            h('b', {}, ['生词']),
+            ...Object.entries(byLevel).sort()
+              .map(([lv, n]) => h('span', {
+                class: 'tag ' + (LEVEL_CLS[lv] || ''),
+              }, [`${lv} ${n}`])),
+          ]),
+          h('div', { class: 'wordlist' }, d.new_words.map(w => h('span', {
+            class: 'word-chip',
+            title: `${w.level} · 出现 ${w.count} 次`,
+          }, [
+            w.token,
+            h('i', { class: 'lv ' + (LEVEL_CLS[w.level] || '') }, [w.level]),
+            w.count > 1 ? h('i', { class: 'ct' }, ['×' + w.count]) : null,
+          ]))),
+        ])
+      : h('div', { class: 'note' }, [
+          '还没有词表，看不到生词清单。先跑 '
+          + 'scripts/friends_cefr.py <集> --llm --json',
+        ]),
+
+    // 台词原文 —— 核对切点切得对不对
+    h('div', { style: 'margin-top:16px' }, [
+      h('b', {}, ['台词']),
+      h('div', { class: 'script-box' },
+        d.items.map(it => it.type === 'scene'
+          ? h('div', { class: 'scene-line' }, ['◆ ' + it.text])
+          : h('div', { class: 'say' }, [
+              h('span', { class: 'who' }, [it.speaker + '：']),
+              it.text,
+            ]))),
+    ]),
+  ]);
+}
+
 // 换场切出的 chunk 是切段的最小单位 —— 最大的那个决定了段大小的下限
 function chunkPanels() {
   const c = S.chunks;
@@ -231,40 +287,7 @@ function segPanels() {
   if (!p) return [h('section', { class: 'panel' }, ['算切段…'])];
   const out = [];
 
-  // 段数选择：并排比，而不是一份一份点开
-  const cmp = S.compare;
-  out.push(panel('切几段',
-    cmp && cmp.most_even ? `${cmp.most_even} 段最齐` : '', [
-    h('div', { class: 'row' }, [
-      h('button', {
-        class: 'act' + (S.segN === null ? ' on' : ''),
-        onclick: () => loadSeg(S.script, null),
-      }, ['自动']),
-      ...(cmp ? cmp.options.map(o => h('button', {
-        class: 'act' + (S.segN === o.n ? ' on' : ''),
-        onclick: () => loadSeg(S.script, o.n),
-      }, [`${o.n} 段`])) : []),
-    ]),
-    cmp ? table(
-      ['段数', { label: '不均衡度', num: true }, '各段词数'],
-      cmp.options.map(o => h('tr', {}, [
-        h('td', {}, [
-          `${o.n} 段`,
-          o.n === cmp.most_even
-            ? h('span', { class: 'tag ok' }, ['最齐']) : null,
-        ]),
-        h('td', { class: 'num' }, [
-          o.spread.toFixed(3),
-          o.spread > 1.5 ? h('span', { class: 'tag bad' }, ['偏']) : null,
-        ]),
-        h('td', { class: 'dim' }, [o.words.join(' / ')]),
-      ]))) : null,
-    h('div', { class: 'note' }, [
-      '不均衡度 = 最大段词数 / 平均段词数。1.0 是完美均分。',
-    ]),
-  ]));
-
-  // 切段效果
+  // 切段效果（主视图）
   out.push(panel(
     `切成 ${p.n} 段` + (p.auto ? '（自动选的段数）' : ''),
     `${p.total_lines} 句 / ${p.total_words} 词 · 不均衡度 ${p.spread}`
@@ -288,7 +311,7 @@ function segPanels() {
         h('td', {}, [h('button', {
           class: 'act' + (S.openSeg === s.index ? ' on' : ''),
           onclick: () => openSegLines(s.index),
-        }, [S.openSeg === s.index ? '收起' : '看台词'])]),
+        }, [S.openSeg === s.index ? '收起' : '看详情'])]),
       ]))
     ),
     p.segments[0] && p.segments[0].new_words === null
@@ -301,22 +324,10 @@ function segPanels() {
         ]),
   ]));
 
-  // 切点核对：最终得看原文
-  if (S.openSeg !== null && S.segLines) {
-    const d = S.segLines;
-    out.push(panel(`第 ${d.index} 段台词`,
-      `${d.lines} 句 / ${d.words} 词 · ${d.locations.join(' · ')}`, [
-      h('div', { style: 'max-height:420px;overflow:auto' },
-        d.items.map(it => it.type === 'scene'
-          ? h('div', {
-              style: 'margin:12px 0 6px;font-weight:600;color:#2563eb',
-            }, ['◆ ' + it.text])
-          : h('div', { style: 'padding:2px 0' }, [
-              h('span', { class: 'dim', style: 'display:inline-block;min-width:92px' },
-                [it.speaker + '：']),
-              it.text,
-            ]))),
-    ]));
+  // 某一段的详细情况
+  if (S.openSeg !== null) {
+    out.push(S.segLines ? segDetail(S.segLines)
+                        : h('section', { class: 'panel' }, ['读这一段…']));
   }
 
   // 每段起止：不展开台词也能核对切点
@@ -330,12 +341,44 @@ function segPanels() {
     ]))),
   ]));
 
-  out.push(panel('这一步还没定型', '', [
+  // 段数对比是调参工具，收进折叠 —— 规则已经定了，它不该抢主位
+  const cmp = S.compare;
+  if (cmp && cmp.options.length) {
+    out.push(panel('换个段数看看', '调参用。当前方案已定，这里只是对比。', [
+      h('details', {}, [
+        h('summary', {}, [`试切其它段数（当前 ${p.n} 段）`]),
+        h('div', { class: 'row', style: 'margin:10px 0' }, [
+          h('button', {
+            class: 'act' + (S.segN === null ? ' on' : ''),
+            onclick: () => loadSeg(S.script, null),
+          }, [`当前方案（${p.saved ? '已定死' : '自动'}）`]),
+          ...cmp.options.map(o => h('button', {
+            class: 'act' + (S.segN === o.n ? ' on' : ''),
+            onclick: () => loadSeg(S.script, o.n),
+          }, [`${o.n} 段`])),
+        ]),
+        table(['段数', { label: '不均衡度', num: true }, '各段词数'],
+          cmp.options.map(o => h('tr', {}, [
+            h('td', {}, [`${o.n} 段`]),
+            h('td', { class: 'num' }, [
+              o.spread.toFixed(3),
+              o.spread > 1.5 ? h('span', { class: 'tag bad' }, ['偏']) : null,
+            ]),
+            h('td', { class: 'dim' }, [o.words.join(' / ')]),
+          ]))),
+        h('div', { class: 'note' }, [
+          '不均衡度 = 最大段词数 / 平均段词数，1.0 是完美均分。'
+          + '这里试切不会改掉定死的方案。',
+        ]),
+      ]),
+    ]));
+  }
+
+  out.push(panel('规则', '', [
     h('div', { class: 'note' }, [
-      `当前规则：${p.rule}。`,
+      p.rule,
       h('br', {}),
-      '逐字稿来源和切段规则由人给、走代码改；这一页只读。'
-      + '规则定型后这里会加重切、调段数、手动挪切点。',
+      '逐字稿来源和切段规则由人给、走代码改；这一页只读。',
     ]),
   ]));
   return out;

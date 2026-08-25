@@ -40,27 +40,35 @@ if st.FRIENDS_ASSETS.is_dir():
 #
 # 两个入口：学习者端（/）和后台（/admin）。它们的迭代节奏差得最远 ——
 # 教室端要上 iPad、要对延迟负责；后台是自己看的，糙一点没关系。
+#
+# 一律不缓存：改完前端刷新就该看到新的。浏览器对没有缓存头的响应会做启发式
+# 缓存，结果是改了代码、服务端也返回了新内容，页面还是旧的 —— 排查这个比
+# 多一次网络请求贵得多。生产再谈缓存。
+NO_CACHE = {"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache"}
+
 
 @app.get("/")
 def index() -> HTMLResponse:
-    return HTMLResponse((st.WEB_DIR / "index.html").read_text())
+    return HTMLResponse((st.WEB_DIR / "index.html").read_text(),
+                        headers=NO_CACHE)
 
 
 @app.get("/app.js")
 def appjs() -> FileResponse:
     return FileResponse(st.WEB_DIR / "app.js",
-                        media_type="application/javascript")
+                        media_type="application/javascript", headers=NO_CACHE)
 
 
 @app.get("/admin")
 def admin_page() -> HTMLResponse:
-    return HTMLResponse((st.WEB_DIR / "admin" / "index.html").read_text())
+    return HTMLResponse((st.WEB_DIR / "admin" / "index.html").read_text(),
+                        headers=NO_CACHE)
 
 
 @app.get("/admin/admin.js")
 def admin_js() -> FileResponse:
     return FileResponse(st.WEB_DIR / "admin" / "admin.js",
-                        media_type="application/javascript")
+                        media_type="application/javascript", headers=NO_CACHE)
 
 
 def main() -> None:

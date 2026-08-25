@@ -10,6 +10,25 @@ HTML = (ROOT / "web" / "admin" / "index.html").read_text()
 JS = (ROOT / "web" / "admin" / "admin.js").read_text()
 
 
+class TestNoCache:
+    """前端一律不缓存：改完刷新就该看到新的。
+
+    实测踩过：改了 admin.js、服务端也返回了新内容，页面还是旧的 ——
+    浏览器对没有缓存头的响应做了启发式缓存。排查这个比多一次请求贵得多。
+    """
+
+    def test_四个前端入口都不缓存(self):
+        from fastapi.testclient import TestClient
+
+        from ailesson.server.app import app
+
+        c = TestClient(app)
+        for path in ("/", "/app.js", "/admin", "/admin/admin.js"):
+            r = c.get(path)
+            assert r.status_code == 200, path
+            assert "no-store" in r.headers.get("cache-control", ""), path
+
+
 class TestHierarchy:
     """三个后台的作用域不同，平级铺开会让层级混乱。
 
