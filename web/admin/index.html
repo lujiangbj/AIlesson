@@ -119,6 +119,29 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 }
 .step .ttl { font-weight: 500; }
 .step .meta { color: var(--dim); font-size: 12.5px; margin-top: 2px; }
+/* 面包屑：从列表钻进某一集 */
+.crumb {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0 0 12px; font-size: 14px; flex-wrap: wrap;
+}
+.crumb .sep { color: var(--line); }
+.crumb .dim { font-size: 13px; }
+button.link {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: var(--accent);
+}
+button.link:hover { text-decoration: underline; }
+/* 剧集详情里的分区 */
+.seg-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+.seg-tabs button {
+  border: 1px solid var(--line); background: #fff; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--dim);
+  padding: 5px 14px; border-radius: 6px;
+}
+.seg-tabs button.on {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+.seg-tabs button:hover:not(.on) { color: var(--ink); }
 /* 生词清单 */
 .wordlist { display: flex; flex-wrap: wrap; gap: 6px; }
 .word-chip {

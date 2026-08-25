@@ -120,7 +120,48 @@ class TestSurface:
     def test_编排页解释版本号(self):
         assert "版本号" in JS
 
-    def test_页面标题和四个标签(self):
+    def test_页面标题和标签(self):
         assert "AIlesson 后台" in HTML
-        for label in ("教具", "编排", "课程计划", "内容完备度"):
+        for label in ("教具", "编排", "课程计划", "剧本"):
             assert label in JS, label
+
+
+class TestDrillDown:
+    """剧集列表和某一集的详情是两层，不是同一页往下追加。
+
+    实测踩过：229 行表格挡在前面，点「看切段」要往下滚一万像素才看到结果 ——
+    屏幕上什么都不变，看着像没反应。
+    """
+
+    def test_列表和详情分开渲染(self):
+        assert "function scriptList" in JS
+        assert "function scriptDetail" in JS
+        assert "S.script ? scriptDetail() : scriptList()" in JS
+
+    def test_有面包屑能回列表(self):
+        assert "class: 'crumb'" in JS
+        assert "openScript(null)" in JS
+        assert ".crumb" in HTML
+
+    def test_进出都回到页首(self):
+        assert JS.count("window.scrollTo(0, 0)") >= 2
+
+    def test_切段和素材是剧集里的分区(self):
+        """它们看的是同一集的两个阶段，不该铺在顶部导航上。"""
+        assert "const SECTIONS" in JS
+        assert "'segments'" in JS and "'assets'" in JS
+        assert "seg-tabs" in JS and ".seg-tabs" in HTML
+
+    def test_素材按当前剧集取(self):
+        """整站一个默认素材的话，进哪一集都看到同一份。"""
+        assert "lesson_episode_id" in JS
+        assert "episode_id=" in JS
+
+    def test_说明素材还没按段分(self):
+        """否则会以为在看某一段的素材。"""
+        assert "整集一份" in JS
+        assert "还没有按切好的" in JS
+
+    def test_不用markdown写html(self):
+        """`**粗体**` 在 HTML 里会原样显示星号。"""
+        assert "**整集一份**" not in JS

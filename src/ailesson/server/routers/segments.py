@@ -85,6 +85,9 @@ def scripts() -> dict[str, Any]:
             "n_segments": plan.n if plan else None,
             "spread": plan.spread if plan else None,
             "has_lesson": (LESSONS / f"lesson-friends-{ep_id}.json").exists(),
+            # 引擎眼里的素材 id。剧本 id 是 0101，引擎那边叫 friends-0101 ——
+            # 前端不该自己拼这个前缀
+            "lesson_episode_id": f"friends-{ep_id}",
         })
     return {"scripts": out, "rule": RULE}
 

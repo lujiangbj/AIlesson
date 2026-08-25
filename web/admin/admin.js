@@ -10,7 +10,8 @@ const headRight = document.getElementById('head-right');
 const S = {
   view: 'scripts',
   scripts: null,
-  script: null,       // 当前展开的剧本 id
+  script: null,       // 当前进入的剧本 id
+  section: 'segments',// 剧集详情里的分区：segments | assets
   chunks: null,       // 换场切出的最小单位
   segPlan: null,      // 切段效果
   segN: null,         // 预览段数（null = 用落盘/自动）
@@ -37,8 +38,7 @@ const S = {
 // 所以导航分两级，右上角只显示当前后台真正相关的那个作用域。
 const BACKENDS = [
   ['research', '教研内容', '按剧集', [
-    ['scripts', '剧本与切段'],
-    ['assets', '素材完备度'],
+    ['scripts', '剧本'],
   ]],
   ['course', '课程', '按学习者', [
     ['plan', '课程计划'],
@@ -47,6 +47,13 @@ const BACKENDS = [
     ['tools', '教具'],
     ['arrangement', '编排'],
   ]],
+];
+
+// 剧集详情里的分区。切段和素材看的是同一集的两个阶段 ——
+// 平级铺在顶部导航上会让人以为它们不相干
+const SECTIONS = [
+  ['segments', '切段'],
+  ['assets', '素材'],
 ];
 
 const PAGE_OF = {};          // 页面 id → 后台 id
@@ -143,7 +150,13 @@ function table(headers, rows) {
 // 第一步（逐字稿来源 + 切段规则）走代码，规则由人给。这里只读 ——
 // 职责是把「切成了什么样」摊开到能判断规则对不对。
 
+// 剧集列表和某一集的详情是**两层**，不是同一页往下追加。
+// 追加的话：229 行表格挡在前面，点开要往下滚一万像素，看着像没反应。
 function viewScripts() {
+  return S.script ? scriptDetail() : scriptList();
+}
+
+function scriptList() {
   const d = S.scripts;
   if (!d) return [h('div', { class: 'empty' }, ['加载中…'])];
   if (!d.scripts.length) {
@@ -152,35 +165,58 @@ function viewScripts() {
         ['还没有解析好的剧本。先跑 scripts/friends_parse.py']),
     ])];
   }
-
-  const out = [
-    panel('剧本', `切段规则：${d.rule}`, [
+  const done = d.scripts.filter(s => s.has_segments).length;
+  return [
+    panel('剧本', `${d.scripts.length} 集 · ${done} 集已切段`, [
       table(
         ['集', '标题', { label: '句', num: true }, { label: '换场', num: true },
-         { label: '人物', num: true }, '词表', '切段', 'lesson', ''],
+         '词表', '切段', 'lesson', ''],
         d.scripts.map(s => h('tr', {}, [
           h('td', {}, [h('b', {}, [s.episode_id])]),
           h('td', {}, [s.title || '—']),
           h('td', { class: 'num' }, [String(s.lines)]),
           h('td', { class: 'num' }, [String(s.scenes)]),
-          h('td', { class: 'num' }, [String(s.speakers)]),
           h('td', {}, [step(s.has_vocab)]),
           h('td', {}, [s.has_segments
             ? h('span', { class: 'tag ok' }, [`${s.n_segments} 段`])
             : step(false)]),
           h('td', {}, [step(s.has_lesson)]),
           h('td', {}, [h('button', {
-            class: 'act' + (S.script === s.episode_id ? ' on' : ''),
-            onclick: () => openScript(s.episode_id),
-          }, [S.script === s.episode_id ? '收起' : '看切段'])]),
+            class: 'act', onclick: () => openScript(s.episode_id),
+          }, ['进入 →'])]),
         ]))
       ),
     ]),
   ];
+}
 
-  if (S.script) {
-    out.push(...chunkPanels());
+// 某一集的详情：面包屑 → 分区（切段 / 素材）→ 内容
+function scriptDetail() {
+  const meta = S.scripts
+    ? S.scripts.scripts.find(x => x.episode_id === S.script) : null;
+  const out = [
+    h('div', { class: 'crumb' }, [
+      h('button', { class: 'link', onclick: () => openScript(null) },
+        ['← 全部剧本']),
+      h('span', { class: 'sep' }, ['/']),
+      h('b', {}, [`第 ${S.script} 集`]),
+      meta ? h('span', { class: 'dim' }, [meta.title || '']) : null,
+    ]),
+    h('div', { class: 'seg-tabs' }, SECTIONS.map(([id, label]) => h('button', {
+      class: S.section === id ? 'on' : '',
+      onclick: () => openSection(id),
+    }, [label]))),
+  ];
+
+  if (S.section === 'assets') {
+    out.push(...assetPanels());
+  } else {
+    if (!S.segPlan) {
+      out.push(h('section', { class: 'panel' }, ['算切段…']));
+      return out;
+    }
     out.push(...segPanels());
+    out.push(...chunkPanels());
   }
   return out;
 }
@@ -628,14 +664,31 @@ function cardsPanel(d) {
 
 // ---------- 内容完备度 ----------
 
-function viewAssets() {
+function assetPanels() {
   const d = S.completeness;
-  if (!d) return [h('div', { class: 'empty' }, ['加载中…'])];
+  if (!d) return [h('section', { class: 'panel' }, ['算完备度…'])];
+
+  const meta = S.scripts
+    ? S.scripts.scripts.find(x => x.episode_id === S.script) : null;
+  const nSeg = meta && meta.n_segments;
 
   const out = [
-    panel(`${d.title}`,
-      `教具声明需要什么素材，这里对上这一集实际有什么。` +
-      (d.arrangement_only ? '当前只审编排 ' + d.arrangement + ' 真正用到的教具。' : ''), [
+    panel('素材',
+      '教具声明需要什么素材，这里对上这一集实际有什么。'
+      + (d.arrangement_only
+         ? `当前只审编排 ${d.arrangement} 真正用到的教具。` : ''), [
+      // 这一页和切段不是一个对象，得说清楚，否则会以为在看某一段的素材
+      nSeg
+        ? h('div', { class: 'note bad' }, [
+            '⚠ 这份素材是 ',
+            h('b', {}, ['整集一份']),
+            `（${d.domains.words.total} 词 / ${d.domains.chunks.total} 短语 / `
+            + `${d.domains.sentences.total} 句），还没有按切好的 ${nSeg} 段分开。`,
+            h('br', {}),
+            '也就是说：现在看不出「第 3 段有哪些素材、缺什么」。'
+            + '把素材按段归属是下一步的活。',
+          ])
+        : null,
       h('div', { class: 'row' }, [
         h('button', {
           class: 'act' + (S.arrangementOnly ? ' on' : ''),
@@ -766,7 +819,7 @@ function render() {
     ]));
     return;
   }
-  const v = { scripts: viewScripts, assets: viewAssets, plan: viewPlan,
+  const v = { scripts: viewScripts, plan: viewPlan,
               tools: viewTools, arrangement: viewArrangement }[S.view];
   for (const node of v()) app.appendChild(node);
 }
@@ -789,7 +842,7 @@ async function go(view, fromHash = false) {
       S.arrangement = await get('/api/admin/arrangement');
     }
     if (view === 'plan') S.plan = await get('/api/admin/plan');
-    if (view === 'assets' && !S.completeness) await loadAssets();
+
   } catch (e) {
     // 没选用户时 plan 返回 409，那不是错误，是「还没到那一步」
     S.err = e.message.includes('还没有用户') ? null : e.message;
@@ -801,20 +854,42 @@ async function go(view, fromHash = false) {
 async function loadAssets() {
   S.completeness = null;
   render();
+  const meta = S.scripts
+    ? S.scripts.scripts.find(x => x.episode_id === S.script) : null;
+  const eid = meta ? meta.lesson_episode_id : null;
   S.completeness = await get(
-    '/api/content/completeness?arrangement_only=' + S.arrangementOnly);
+    '/api/content/completeness?arrangement_only=' + S.arrangementOnly
+    + (eid ? '&episode_id=' + encodeURIComponent(eid) : ''));
   if (!S.tools) S.tools = await get('/api/admin/tools');
   render();
 }
 
+async function openSection(id) {
+  S.section = id;
+  window.scrollTo(0, 0);
+  render();
+  if (id === 'assets' && !S.completeness) {
+    try {
+      await loadAssets();
+    } catch (e) {
+      S.err = e.message;
+      render();
+    }
+  }
+}
+
 async function openScript(id) {
-  if (S.script === id) {
+  if (id === null || S.script === id) {
     S.script = S.chunks = S.segPlan = S.compare = S.segLines = null;
     S.openSeg = null;
+    window.scrollTo(0, 0);
     render();
     return;
   }
   S.script = id;
+  S.section = 'segments';
+  S.completeness = null;
+  window.scrollTo(0, 0);      // 进到详情要从头开始看，不是接着列表的滚动位置
   S.chunks = S.segPlan = S.compare = S.segLines = null;
   S.openSeg = null;
   S.segN = null;
