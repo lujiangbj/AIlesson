@@ -116,6 +116,64 @@ class TestVocab:
             assert s["new_words"] is None
 
 
+class TestStageBoundary:
+    """允许拿舞台提示当次级边界。
+
+    Friends S1E1 的开场 Central Perk 一场 107 句 1469 词，占全集 39%。只按换场
+    切的话它是不可分的整体，任何包含它的段都至少这么大 —— 段数越多其它段越碎。
+    那场戏内部有 9 个舞台提示（Time Lapse / 人物进出），拿它们当次级边界能切开。
+    """
+
+    @pytest.fixture
+    def one_big_scene(self):
+        """一个大场景（内含 2 个舞台提示）+ 两个小场景。"""
+        out = [{"type": "scene", "text": "Central Perk"}]
+        for i in range(10):
+            out.append({"type": "line", "speaker": "A",
+                        "text": " ".join(["word"] * 10)})
+        out.append({"type": "stage", "text": "Time Lapse"})
+        for i in range(10):
+            out.append({"type": "line", "speaker": "B",
+                        "text": " ".join(["word"] * 10)})
+        out.append({"type": "stage", "text": "Ross enters"})
+        for i in range(10):
+            out.append({"type": "line", "speaker": "C",
+                        "text": " ".join(["word"] * 10)})
+        for scene in ("Monica's Apartment", "The Museum"):
+            out.append({"type": "scene", "text": scene})
+            for i in range(4):
+                out.append({"type": "line", "speaker": "D",
+                            "text": " ".join(["word"] * 5)})
+        return out
+
+    def test_默认只按换场切(self, one_big_scene):
+        plan = SegmentPlan.build("x", one_big_scene, n=3)
+        # 大场景整块进第 1 段
+        assert plan.segments[0]["words"] == 300
+
+    def test_开启后能切开大场景(self, one_big_scene):
+        plan = SegmentPlan.build("x", one_big_scene, n=3, use_stage=True)
+        assert plan.segments[0]["words"] < 300
+
+    def test_开启后更均(self, one_big_scene):
+        a = SegmentPlan.build("x", one_big_scene, n=3)
+        b = SegmentPlan.build("x", one_big_scene, n=3, use_stage=True)
+        assert b.spread < a.spread
+
+    def test_规则说明里写明用了次级边界(self, one_big_scene):
+        plan = SegmentPlan.build("x", one_big_scene, n=3, use_stage=True)
+        assert "舞台提示" in plan.rule
+
+    def test_仍然不丢句子(self, one_big_scene):
+        plan = SegmentPlan.build("x", one_big_scene, n=3, use_stage=True)
+        assert sum(s["lines"] for s in plan.segments) == plan.total_lines
+
+    def test_段内地点仍可追溯(self, one_big_scene):
+        """在场景内部切开后，两半都还属于同一个地点。"""
+        plan = SegmentPlan.build("x", one_big_scene, n=3, use_stage=True)
+        assert any("Central Perk" in s["locations"] for s in plan.segments)
+
+
 class TestConsistency:
     def test_切段不丢句子(self, items):
         plan = SegmentPlan.build("0101", items, n=3)

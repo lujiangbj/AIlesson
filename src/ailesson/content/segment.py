@@ -22,6 +22,7 @@ class Chunk:
     """一个换场到下一个换场之间的内容。切分的最小单位。"""
     scene: str | None                    # 换场地点，None 表示开场未标注
     items: list[dict] = field(default_factory=list)
+    at_stage: bool = False               # 起点是舞台提示（次级边界），不是换场
 
     @property
     def lines(self) -> list[dict]:
@@ -79,16 +80,30 @@ class Segment:
         }
 
 
-def split_chunks(items: list[dict]) -> list[Chunk]:
-    """按 type=="scene"（真换场）把 items 切成 chunk。
+def split_chunks(items: list[dict], *, use_stage: bool = False) -> list[Chunk]:
+    """把 items 切成 chunk（切段的最小单位）。
 
-    type=="stage" 的舞台提示（Time Lapse / Monica exits）不算边界，
-    它们是同场内的时间跳跃或动作，切在那里会把一段对话拦腰截断。
+    默认只在 type=="scene"（真换场）处切。type=="stage" 的舞台提示
+    （Time Lapse / Monica exits）是同场内的时间跳跃或动作，切在那里会把一段
+    对话拦腰截断。
+
+    `use_stage=True` 时舞台提示也当边界。这是为了对付「一场戏占掉半集」——
+    Friends S1E1 的开场 Central Perk 是 107 句 1469 词、占全集 39%，只按换场
+    切的话它不可分，任何包含它的段都至少这么大，段数越多其它段越碎。
+    那场戏内部有 9 个舞台提示，用上之后最大单位从 1469 降到 475。
+
+    代价：切点可能落在一段对话中间。DP 只做 n-1 刀，不会把每个提示都切开，
+    所以实际影响有限 —— 但切完要人眼核对一遍（后台「切点」那栏就是干这个的）。
     """
     chunks: list[Chunk] = [Chunk(scene=None)]
+    scene: str | None = None
     for it in items:
         if it["type"] == "scene":
-            chunks.append(Chunk(scene=it["text"]))
+            scene = it["text"]
+            chunks.append(Chunk(scene=scene))
+        elif it["type"] == "stage" and use_stage:
+            # 场景没换，沿用当前地点 —— 切开的两半仍属同一个地点
+            chunks.append(Chunk(scene=scene, at_stage=True))
         else:
             chunks[-1].items.append(it)
     # 丢掉没台词的空 chunk（开场注释、连续换场标记）
@@ -167,13 +182,14 @@ def segment_episode(
     n: int | None = None,
     *,
     n_range: tuple[int, int] = (4, 6),
+    use_stage: bool = False,
 ) -> list[Segment]:
     """把一集切成若干学习段，切点只落在换场边界（不会断在场景中途）。
 
     n 给定则切固定份数；不给则在 n_range 内搜最均匀的方案。
     份数不必是 5——4 段或 6 段若切得更齐，就用那个。
     """
-    chunks = split_chunks(items)
+    chunks = split_chunks(items, use_stage=use_stage)
     if not chunks:
         return []
 
@@ -204,6 +220,10 @@ def segment_episode(
 
 # 当前切段规则的说明，随计划落盘。规则会变，存下来才知道这份是怎么切的
 RULE = "词数均分（DP 最优）+ 切点吸附换场边界；逐字稿无时间轴，用词数近似时长"
+RULE_STAGE = (
+    "词数均分（DP 最优）+ 切点吸附换场边界，"
+    "大场景内部允许在舞台提示处切（次级边界）；逐字稿无时间轴，用词数近似时长"
+)
 
 # 一集的估算时长（分钟），用于把词数换算成每段时长
 RUNTIME_MIN = 24
@@ -227,6 +247,7 @@ class SegmentPlan:
     total_words: int
     runtime_min: float
     rule: str
+    use_stage: bool = False         # 是否用了舞台提示当次级边界
     segments: list[dict] = field(default_factory=list)
     title: str = ""
 
@@ -240,8 +261,9 @@ class SegmentPlan:
         levels: dict[str, str] | None = None,
         runtime_min: float = RUNTIME_MIN,
         title: str = "",
+        use_stage: bool = False,
     ) -> SegmentPlan:
-        segs = segment_episode(items, n)
+        segs = segment_episode(items, n, use_stage=use_stage)
         total_words = sum(s.words for s in segs) or 1
         rows: list[dict] = []
         for s in segs:
@@ -273,7 +295,8 @@ class SegmentPlan:
             total_lines=sum(len(s.lines) for s in segs),
             total_words=sum(s.words for s in segs),
             runtime_min=runtime_min,
-            rule=RULE,
+            rule=RULE_STAGE if use_stage else RULE,
+            use_stage=use_stage,
             segments=rows,
             title=title,
         )
@@ -289,6 +312,7 @@ class SegmentPlan:
             "total_words": self.total_words,
             "runtime_min": self.runtime_min,
             "rule": self.rule,
+            "use_stage": self.use_stage,
             "segments": self.segments,
         }
 
@@ -304,6 +328,7 @@ class SegmentPlan:
             total_words=d.get("total_words", 0),
             runtime_min=d.get("runtime_min", RUNTIME_MIN),
             rule=d.get("rule", ""),
+            use_stage=bool(d.get("use_stage", False)),
             segments=list(d.get("segments", [])),
         )
 
@@ -328,7 +353,7 @@ def load_plan(episode_id: str, root: Path) -> SegmentPlan | None:
 
 
 __all__ = [
-    "KNOWN_LEVEL", "RULE", "RUNTIME_MIN", "WORDS_PER_LESSON",
+    "KNOWN_LEVEL", "RULE", "RULE_STAGE", "RUNTIME_MIN", "WORDS_PER_LESSON",
     "Chunk", "Segment", "SegmentPlan",
     "load_plan", "save_plan", "segment_episode", "split_chunks", "spread",
 ]

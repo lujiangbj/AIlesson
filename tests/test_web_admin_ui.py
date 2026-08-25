@@ -10,11 +10,51 @@ HTML = (ROOT / "web" / "admin" / "index.html").read_text()
 JS = (ROOT / "web" / "admin" / "admin.js").read_text()
 
 
+class TestHierarchy:
+    """三个后台的作用域不同，平级铺开会让层级混乱。
+
+        教研内容  作用域 = 一部剧的一集
+        课程      作用域 = 一个学习者
+        系统      作用域 = 全局
+
+    所以导航必须分两级，右上角只显示当前后台相关的那个作用域。
+    """
+
+    def test_三个后台各自成组(self):
+        assert "const BACKENDS" in JS
+        for bid in ("'research'", "'course'", "'system'"):
+            assert bid in JS, bid
+
+    def test_每个后台标了作用域(self):
+        for scope in ("按剧集", "按学习者", "全局"):
+            assert scope in JS, scope
+
+    def test_有二级导航(self):
+        assert 'getElementById(\'sub\')' in JS
+        assert 'id="sub"' in HTML
+
+    def test_只有一页时不铺二级(self):
+        assert "pages.length > 1" in JS
+        assert "empty-row" in JS and "#sub.empty-row" in HTML
+
+    def test_右上角按后台显示作用域(self):
+        """看剧本时不该挂着学习者和编排版本。"""
+        assert "function scopeText" in JS
+        assert "scopeText(cur)" in JS
+
+    def test_页面到后台的映射是推导出来的(self):
+        """别手写两份，加一页只改 BACKENDS。"""
+        assert "PAGE_OF" in JS and "backendOf" in JS
+
+
 class TestRouting:
-    """四块要能各自直达，否则给不出可分享的链接。"""
+    """每页要能直达，否则给不出可分享的链接。"""
 
     def test_视图进hash(self):
-        assert "location.hash = view" in JS
+        assert "location.hash = path" in JS
+
+    def test_hash带后台前缀(self):
+        assert "`${backendOf(view)}/${view}`" in JS
 
     def test_启动读hash(self):
         assert "viewFromHash" in JS
@@ -22,12 +62,16 @@ class TestRouting:
     def test_监听前进后退(self):
         assert "hashchange" in JS
 
-    def test_四块都注册了(self):
-        for view in ("tools", "arrangement", "plan", "content"):
+    def test_五个页面都注册了(self):
+        for view in ("scripts", "assets", "plan", "tools", "arrangement"):
             assert f"'{view}'" in JS, view
 
-    def test_非法hash退回教具页(self):
-        assert "VIEW_IDS.includes(h) ? h : 'tools'" in JS
+    def test_只给后台名也能进(self):
+        """#research 该进它的第一页。"""
+        assert "PAGES_OF[page]" in JS
+
+    def test_非法hash退回剧本页(self):
+        assert "return 'scripts';" in JS
 
 
 class TestReadOnly:

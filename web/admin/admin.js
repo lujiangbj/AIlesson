@@ -4,6 +4,7 @@
 
 const app = document.getElementById('app');
 const nav = document.getElementById('nav');
+const sub = document.getElementById('sub');
 const headRight = document.getElementById('head-right');
 
 const S = {
@@ -27,13 +28,41 @@ const S = {
   err: null,
 };
 
-const VIEWS = [
-  ['scripts', '剧本与切段'],
-  ['tools', '教具'],
-  ['arrangement', '编排'],
-  ['plan', '课程计划'],
-  ['content', '内容完备度'],
+// 三个后台，各自的作用域不同 —— 平级铺开会让层级混乱：
+//
+//   教研内容  作用域 = 一部剧的一集     （剧本、切段、素材）
+//   课程      作用域 = 一个学习者       （ta 的自评、探测、课程表）
+//   系统      作用域 = 全局             （教具表、编排）
+//
+// 所以导航分两级，右上角只显示当前后台真正相关的那个作用域。
+const BACKENDS = [
+  ['research', '教研内容', '按剧集', [
+    ['scripts', '剧本与切段'],
+    ['assets', '素材完备度'],
+  ]],
+  ['course', '课程', '按学习者', [
+    ['plan', '课程计划'],
+  ]],
+  ['system', '系统', '全局', [
+    ['tools', '教具'],
+    ['arrangement', '编排'],
+  ]],
 ];
+
+const PAGE_OF = {};          // 页面 id → 后台 id
+const PAGES_OF = {};         // 后台 id → 页面 id 列表
+for (const [bid, , , pages] of BACKENDS) {
+  PAGES_OF[bid] = pages.map(([pid]) => pid);
+  for (const [pid] of pages) PAGE_OF[pid] = bid;
+}
+const ALL_PAGES = Object.keys(PAGE_OF);
+const backendOf = (page) => PAGE_OF[page] || 'research';
+const labelOf = (page) => {
+  for (const [, , , pages] of BACKENDS) {
+    for (const [pid, label] of pages) if (pid === page) return label;
+  }
+  return page;
+};
 
 // ---------- 工具 ----------
 
@@ -74,12 +103,31 @@ function sizeBar(v, max) {
            [h('i', { style: `width:${pct(v, max)}%` })]);
 }
 
-function panel(title, sub, kids) {
+function panel(title, subtitle, kids) {
   return h('section', { class: 'panel' }, [
     h('h2', {}, [title]),
-    sub ? h('div', { class: 'sub' }, [sub]) : null,
+    subtitle ? h('div', { class: 'sub' }, [subtitle]) : null,
     ...kids,
   ]);
+}
+
+// 当前后台的作用域。三个后台各自只关心一样东西
+function scopeText(bid) {
+  const st = S.status;
+  if (bid === 'research') {
+    const n = S.scripts ? S.scripts.scripts.length : null;
+    return S.script ? `第 ${S.script} 集`
+                    : (n ? `${n} 集剧本` : '剧本');
+  }
+  if (bid === 'course') {
+    if (!st) return '';
+    return st.user ? `学习者：${st.user.name} · ${st.episode.title.slice(0, 30)}`
+                   : '还没有学习者';
+  }
+  if (bid === 'system' && st && st.arrangement) {
+    return `编排 ${st.arrangement.id} v${st.arrangement.version}`;
+  }
+  return '';
 }
 
 function table(headers, rows) {
@@ -537,7 +585,7 @@ function cardsPanel(d) {
 
 // ---------- 内容完备度 ----------
 
-function viewContent() {
+function viewAssets() {
   const d = S.completeness;
   if (!d) return [h('div', { class: 'empty' }, ['加载中…'])];
 
@@ -548,7 +596,7 @@ function viewContent() {
       h('div', { class: 'row' }, [
         h('button', {
           class: 'act' + (S.arrangementOnly ? ' on' : ''),
-          onclick: () => { S.arrangementOnly = !S.arrangementOnly; loadContent(); },
+          onclick: () => { S.arrangementOnly = !S.arrangementOnly; loadAssets(); },
         }, [S.arrangementOnly ? '只看编排用到的教具' : '看全部教具']),
         h('span', { class: 'dim' }, [
           '报「短语缺配图」没意义 —— 编排里短语走听音选义，本来不用图。',
@@ -640,23 +688,33 @@ function toolName(tid) {
 // ---------- 装配 ----------
 
 function render() {
+  const cur = backendOf(S.view);
+
+  // 一级：三个后台
   nav.innerHTML = '';
-  for (const [id, label] of VIEWS) {
+  for (const [bid, label] of BACKENDS) {
     nav.appendChild(h('button', {
-      class: S.view === id ? 'on' : '',
-      onclick: () => go(id),
+      class: cur === bid ? 'on' : '',
+      onclick: () => go(PAGES_OF[bid][0]),
     }, [label]));
   }
 
+  // 右上角只显示当前后台的作用域 —— 看剧本时不该挂着学习者和编排版本
   headRight.innerHTML = '';
-  if (S.status) {
-    const bits = [S.status.episode.title];
-    if (S.status.user) bits.push(S.status.user.name);
-    if (S.status.arrangement) {
-      bits.push(`${S.status.arrangement.id} v${S.status.arrangement.version}`);
+  headRight.appendChild(h('span', {}, [scopeText(cur)]));
+
+  // 二级：当前后台里的页面。只有一页就不铺
+  sub.innerHTML = '';
+  const pages = (BACKENDS.find(b => b[0] === cur) || [])[3] || [];
+  if (pages.length > 1) {
+    for (const [pid, label] of pages) {
+      sub.appendChild(h('button', {
+        class: S.view === pid ? 'on' : '',
+        onclick: () => go(pid),
+      }, [label]));
     }
-    headRight.appendChild(h('span', {}, [bits.join(' · ')]));
   }
+  sub.classList.toggle('empty-row', pages.length <= 1);
 
   app.innerHTML = '';
   if (S.err) {
@@ -665,9 +723,8 @@ function render() {
     ]));
     return;
   }
-  const v = { scripts: viewScripts, tools: viewTools,
-              arrangement: viewArrangement, plan: viewPlan,
-              content: viewContent }[S.view];
+  const v = { scripts: viewScripts, assets: viewAssets, plan: viewPlan,
+              tools: viewTools, arrangement: viewArrangement }[S.view];
   for (const node of v()) app.appendChild(node);
 }
 
@@ -675,7 +732,10 @@ async function go(view, fromHash = false) {
   S.view = view;
   S.err = null;
   // 每块要能直达和分享，所以视图进 hash（#tools / #arrangement / #plan / #content）
-  if (!fromHash && location.hash.slice(1) !== view) location.hash = view;
+  const path = `${backendOf(view)}/${view}`;
+  if (!fromHash && decodeURIComponent(location.hash.slice(1)) !== path) {
+    location.hash = path;
+  }
   render();
   try {
     if (view === 'scripts' && !S.scripts) {
@@ -686,7 +746,7 @@ async function go(view, fromHash = false) {
       S.arrangement = await get('/api/admin/arrangement');
     }
     if (view === 'plan') S.plan = await get('/api/admin/plan');
-    if (view === 'content' && !S.completeness) await loadContent();
+    if (view === 'assets' && !S.completeness) await loadAssets();
   } catch (e) {
     // 没选用户时 plan 返回 409，那不是错误，是「还没到那一步」
     S.err = e.message.includes('还没有用户') ? null : e.message;
@@ -695,7 +755,7 @@ async function go(view, fromHash = false) {
   render();
 }
 
-async function loadContent() {
+async function loadAssets() {
   S.completeness = null;
   render();
   S.completeness = await get(
@@ -758,11 +818,14 @@ async function openCards(index) {
   render();
 }
 
-const VIEW_IDS = VIEWS.map(([id]) => id);
-
 function viewFromHash() {
-  const h = location.hash.slice(1);
-  return VIEW_IDS.includes(h) ? h : 'tools';
+  // 支持 #research/scripts 和 #scripts 两种写法
+  const raw = decodeURIComponent(location.hash.slice(1));
+  const page = raw.includes('/') ? raw.split('/')[1] : raw;
+  if (ALL_PAGES.includes(page)) return page;
+  // 只给了后台名就进它的第一页
+  if (PAGES_OF[page]) return PAGES_OF[page][0];
+  return 'scripts';
 }
 
 window.addEventListener('hashchange', () => {

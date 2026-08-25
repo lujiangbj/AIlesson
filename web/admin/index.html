@@ -39,7 +39,22 @@ nav button {
 }
 nav button.on { color: var(--accent); border-bottom-color: var(--accent); }
 nav button:hover { color: var(--ink); }
+nav button { font-weight: 500; }
 .head-right { margin-left: auto; color: var(--dim); font-size: 13px; }
+/* 二级导航：当前后台里的页面。只有一页时整条收起 */
+#sub {
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  padding: 0 20px; display: flex; gap: 16px;
+  position: sticky; top: 47px; z-index: 9;
+}
+#sub.empty-row { display: none; }
+#sub button {
+  border: 0; background: none; padding: 9px 0; cursor: pointer;
+  font: inherit; font-size: 13px; color: var(--dim);
+  border-bottom: 2px solid transparent;
+}
+#sub button.on { color: var(--ink); border-bottom-color: var(--ink); }
+#sub button:hover { color: var(--ink); }
 main { padding: 20px; max-width: 1400px; margin: 0 auto; }
 .panel {
   background: var(--panel); border: 1px solid var(--line);
@@ -112,6 +127,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
   <nav id="nav"></nav>
   <div class="head-right" id="head-right"></div>
 </header>
+<div id="sub"></div>
 <main id="app"><div class="empty">加载中…</div></main>
 <script src="/admin/admin.js"></script>
 </body>
